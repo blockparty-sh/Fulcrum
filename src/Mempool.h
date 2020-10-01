@@ -19,6 +19,7 @@
 #pragma once
 
 #include "BlockProcTypes.h"
+#include "ReusableBlock.h"
 #include "TXO.h"
 
 #include "bitcoin/amount.h"
@@ -103,6 +104,8 @@ struct Mempool
     using TxRef = std::shared_ptr<Tx>;
     /// master mapping of TxHash -> TxRef
     using TxMap = std::unordered_map<TxHash, TxRef, HashHasher>;
+    /// list of transactions received in order -> TxRef for use in reusable blocks
+    using RuTxList = std::vector<TxRef>;
     /// ensures an ordering of TxRefs for the set below that are from fewest ancestors -> most ancestors
     struct TxRefOrdering {
         bool operator()(const TxRef &a, const TxRef &b) const {
@@ -125,6 +128,8 @@ struct Mempool
     // -- Data members of struct Mempool --
     TxMap txs;
     HashXTxMap hashXTxs;
+    RuTxList txsOrdered; // This begins at 0 and counts up for each tx to allow for reusable indexing by txnum without being in a block
+    ReusableBlock ruBlk; // Allow for indexing for reusable addresses
 
 
     // -- Add to mempool

@@ -236,6 +236,19 @@ public:
     /// return a truncated vector if the overflow is as a result of confirmed+unconfirmed exceeding MaxHistory.
     UnspentItems listUnspent(const HashX &) const;
 
+
+    //-- reusable history
+    struct ReusableHistoryItem {
+        TxHash hash;
+        int height = 0; ///< block height. 0 = unconfirmed
+    };
+    using ReusableHistory = std::vector<ReusableHistoryItem>;
+
+    /// TODO document better
+    /// Thread-safe. Will return an empty vector if the confirmed history size exceeds MaxHistory, or a truncated
+    /// vector if the confirmed + unconfirmed history exceeds MaxHistory.
+    ReusableHistory getReusableHistory(const BlockHeight height, const size_t count, const std::string & prefix, bool includeConfirmed, bool includeMempool) const;
+
     /// thread safe -- returns confirmd, unconfirmed balance for a scripthash
     std::pair<bitcoin::Amount, bitcoin::Amount> getBalance(const HashX &) const;
 
@@ -356,6 +369,7 @@ private:
     void loadCheckHeadersInDB(); ///< may throw -- called from startup()
     void loadCheckUTXOsInDB(); ///< may throw -- called from startup()
     void loadCheckShunspentInDB(); ///< may throw -- called from startup()
+    void loadCheckReusableBlocksInDb(); ///< may throw -- called from startup()
     void loadCheckTxNumsFileAndBlkInfo(); ///< may throw -- called from startup()
     void loadCheckEarliestUndo(); ///< may throw -- called from startup()
 
@@ -425,6 +439,11 @@ RocksDB: "scripthash_unspent"
   using this scheme. I tried a read-modify-write approach (keying off just HashX) and it was painfully slow on synch.
   This is much faster to synch.
 
+RocksDB: "rublk2trie"
+  Purpose: store txnums referenced by prefix in the ReusableBlock structure for allowing for reusable address queries
+  Key: height
+  Value: see struct ReusableBlock
+  TODO document better
 
 A note about ACID: (atomic, consistent, isolated, durable)
 

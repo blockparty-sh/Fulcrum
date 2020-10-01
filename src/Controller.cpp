@@ -727,6 +727,7 @@ void SynchMempoolTask::processResults()
         }
         cachet0.fin(); // end timestamp
     }
+
     if (cache.size())
         DebugM("Mempool: pre-cache of ", cache.size(), Util::Pluralize(" confirmed spend", cache.size()),
                " from db took ", cachet0.msecStr(), " msec");
@@ -751,6 +752,13 @@ void SynchMempoolTask::processResults()
         // of time we hold this lock -- so we hold it while accessing an in-memory data structure
         // rather than the DB on disk (which would be slow).
         auto [mempool, lock] = storage->mutableMempool(); // grab mempool struct exclusively
+        for (const auto & [txid, pair] : txsDownloaded) {
+            const auto & [tx, ctx] = pair;
+            mempool.txsOrdered.push_back(tx);
+            for (const auto & in : ctx->vin) {
+                mempool.ruBlk.add(ReusableBlock::serializeInput(in), mempool.txsOrdered.size() - 1);
+            }
+        }
         // check that the mempool didn't change
         if (UNLIKELY(std::tie(sizes.nTxs, sizes.nHashXs) != std::tuple(mempool.txs.size(), mempool.hashXTxs.size()))) {
             // This size heuristic is enough because other subsystems can only drop or clear, never add.

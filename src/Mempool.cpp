@@ -27,6 +27,8 @@
 void Mempool::clear() {
     txs.clear();
     hashXTxs.clear();
+    txsOrdered.clear();
+    ruBlk.clear();
     txs.rehash(0); // this should free previous capacity
     hashXTxs.rehash(0);
 }

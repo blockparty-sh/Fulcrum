@@ -21,6 +21,7 @@
 #include "Mempool.h"
 #include "Merkle.h"
 #include "RecordFile.h"
+#include "ReusableBlock.h"
 #include "Storage.h"
 #include "SubsMgr.h"
 
@@ -173,6 +174,8 @@ namespace {
     template <> TXO Deserialize(const QByteArray &, bool *);
     template <> QByteArray Serialize(const TXOInfo &);
     template <> TXOInfo Deserialize(const QByteArray &, bool *);
+    template <> QByteArray Serialize(const ReusableBlock &);
+    template <> ReusableBlock Deserialize(const QByteArray &, bool *);
     template <> [[maybe_unused]] QByteArray Serialize(const bitcoin::Amount &);
     template <> bitcoin::Amount Deserialize(const QByteArray &, bool *);
     // TxNumVec
@@ -495,6 +498,7 @@ struct Storage::Pvt
 
         std::unique_ptr<rocksdb::DB> meta, blkinfo, utxoset,
                                      shist, shunspent, // scripthash_history and scripthash_unspent
+                                     rublk2trie,
                                      undo; // undo (reorg rewind)
     } db;
 
@@ -676,6 +680,7 @@ void Storage::startup()
             { "utxoset", p->db.utxoset, opts, 0.305 },
             { "scripthash_history", p->db.shist, shistOpts, 0.33 },
             { "scripthash_unspent", p->db.shunspent, opts, 0.305 },
+            { "rublk2trie", p->db.rublk2trie, opts, 0.10 },
             { "undo", p->db.undo, opts, 0.0395 },
         };
         std::size_t memTotal = 0;
@@ -748,6 +753,8 @@ void Storage::startup()
     loadCheckUTXOsInDB();
     // very slow check, only runs if -C -C (specified twice)
     loadCheckShunspentInDB();
+    // load reusable addresses index data
+    loadCheckReusableBlocksInDb();
     // load check earliest undo to populate earliestUndoHeight
     loadCheckEarliestUndo();
 
@@ -828,7 +835,7 @@ auto Storage::stats() const -> Stats
     {
         // db stats
         QVariantMap m;
-        for (const auto ptr : { &p->db.blkinfo, &p->db.meta, &p->db.shist, &p->db.shunspent, &p->db.undo, &p->db.utxoset, }) {
+        for (const auto ptr : { &p->db.blkinfo, &p->db.meta, &p->db.shist, &p->db.shunspent, &p->db.undo, &p->db.utxoset, &p->db.rublk2trie }) {
             QVariantMap m2;
             const auto & db = *ptr;
             const QString name = QFileInfo(QString::fromStdString(db->GetName())).fileName();
@@ -1354,6 +1361,46 @@ void Storage::loadCheckShunspentInDB()
           << " in " << t0.secsStr() << " sec";
  }
 
+void Storage::loadCheckReusableBlocksInDb()
+{
+    FatalAssert(!!p->db.rublk2trie, __func__, ": Reusable db is not open");
+
+    if (options->doSlowDbChecks) {
+        Log() << "CheckDB: Verifying Reusable db (this may take some time) ...";
+
+        const auto t0 = Util::getTimeNS();
+        {
+            const int currentHeight = latestTip().first;
+
+            std::unique_ptr<rocksdb::Iterator> iter(p->db.rublk2trie->NewIterator(p->db.defReadOpts));
+            if (!iter) throw DatabaseError("Unable to obtain an iterator to the reusable set db");
+            for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+                // TODO: the below checks may be too slow. See about removing them and just counting the iter.
+                // const auto ru = Deserialize<ReusableBlock>(FromSlice(iter->key()));
+                // TODO
+                // if (!ru.isValid()) {
+                //     throw DatabaseSerializationError("Read an invalid trie from the rublk2trie database."
+                //                                      " This may be due to a database format mismatch."
+                //                                      "\n\nDelete the datadir and resynch to bitcoind.\n");
+                // }
+            }
+
+            // TODO check amount of rublks the same as amount of block headers
+            // TODO count amount of txs, check the amount of txs the same as stored amount (must save in key like rublk2trie.total_txs or something
+        }
+        const auto elapsed = Util::getTimeNS();
+        Debug() << "CheckDB: Verified reusable tries in " << QString::number((elapsed-t0)/1e6, 'f', 3) << " msec";
+
+    } else {
+        // p->utxoCt = readUtxoCtFromDB();
+    }
+
+    // TODO 
+    // if (const auto ct = utxoSetSize(); ct)
+    //     Log() << "ReusableBlock set: "  << ct << Util::Pluralize(" utxo", ct)
+    //           << ", " << QString::number(utxoSetSizeMB(), 'f', 3) << " MB";
+}
+
 void Storage::loadCheckEarliestUndo()
 {
     FatalAssert(!!p->db.undo,  __func__, ": Undo db is not open");
@@ -1704,10 +1751,21 @@ void Storage::addBlock(PreProcessedBlockPtr ppb, bool saveUndo, unsigned nReserv
                     }
                 }
 
+                // reusable addresses blk data containing prefix lookup
+                ReusableBlock ruBlk;
+
+                // limit number of inputs according to spec to reduce dos vector
+                constexpr size_t REUSABLE_INPUT_IDX_LIMIT = 30;
+
                 // add spends (process inputs)
                 unsigned inum = 0;
                 for (auto & in : ppb->inputs) {
                     const TXO txo{in.prevoutHash, in.prevoutN};
+                    // add to reusable set skip coinbase as it has no input
+                    if (inum && inum < REUSABLE_INPUT_IDX_LIMIT) { // see note above about this limit
+                        // TODO should we send whole prevoutHash here or just prefix??
+                        ruBlk.add(in.ruHash, in.txIdx);
+                    }
                     if (!inum) {
                         // coinbase.. skip
                     } else if (in.parentTxOutIdx.has_value()) {
@@ -1751,6 +1809,10 @@ void Storage::addBlock(PreProcessedBlockPtr ppb, bool saveUndo, unsigned nReserv
                     ++inum;
                 }
 
+                // save rublk2trie update to db
+                // TODO this should also update a counter so we can track some corruption occurring when scanning in loadCheckReusableBlocksInDb
+                static const QString rublkInfoErrMsg("Error writing ReusableBlock to db");
+                GenericDBPut(p->db.rublk2trie.get(), ppb->height, ruBlk, rublkInfoErrMsg, p->db.defWriteOpts);
                 // commit the utxoset updates now.. this issues the writes to the db and also updates
                 // p->utxoCt. This may throw.
                 issueUpdates(utxoBatch);
@@ -1957,6 +2019,7 @@ BlockHeight Storage::undoLatestBlock(bool notifySubs)
             p->blkInfos.pop_back();
             p->blkInfosByTxNum.erase(undo.blkInfo.txNum0);
             GenericDBDelete(p->db.blkinfo.get(), uint32_t(undo.height), "Failed to delete blkInfo in undoLatestBlock");
+            GenericDBDelete(p->db.rublk2trie.get(), uint32_t(undo.height), "Failed to delete rublk2trie in undoLatestBlock"); // TODO correct message / should we move this elsewhere?
             // clear num2hash cache
             p->lruNum2Hash.clear();
             // remove block from txHashes cache
@@ -2234,6 +2297,76 @@ auto Storage::getHistory(const HashX & hashX, bool conf, bool unconf) const -> H
                 ret.reserve(total);
                 for (const auto & tx : txvec)
                     ret.emplace_back(HistoryItem{tx->hash, tx->hasUnconfirmedParentTx ? -1 : 0, tx->fee});
+            }
+        }
+    } catch (const std::exception &e) {
+        Warning(Log::Magenta) << __func__ << ": " << e.what();
+    }
+    return ret;
+}
+
+auto Storage::getReusableHistory(const BlockHeight start_height, const size_t count, const std::string & prefix, bool conf, bool unconf) const -> ReusableHistory
+{
+    ReusableHistory ret;
+    const size_t maxReusableHistory = size_t(options->maxReusableHistory);
+    if (prefix.size() > ReusableBlock::MAX_PREFIX_SIZE)
+        return ret;
+    try {
+        SharedLockGuard g(p->blocksLock);  // makes sure history doesn't mutate from underneath our feet
+        auto fastRemoveDuplicates = [](auto& nums) {
+            // fast remove duplicates TODO compare to unordered_set (this should be faster with good sort)
+            std::sort(nums.begin(), nums.end());
+            nums.erase(std::unique(nums.begin(), nums.end()), nums.end());
+        };
+
+        if (conf) {
+            assert(bool(p->db.rublk2trie));
+            static const QString err("Error retrieving reusable history for a prefix");
+
+            for (BlockHeight height = start_height; height < start_height + count; ++height) {
+                auto ruBlk = GenericDBGetFailIfMissing<ReusableBlock>(p->db.rublk2trie.get(), height,
+                    "Failed to read reusuable trie from the rublk2trie db", false, p->db.defReadOpts);
+                // TODO add shortcut here if length is 0, we then quick add all txs in a block here
+                // get properly prepared prefix for searching in trie
+                std::vector<TxNum> nums;
+                { // append all vectors of txnums
+                    auto pRange = ruBlk.prefixSearch(prefix);
+                    for (auto it = pRange.first; it != pRange.second; ++it)
+                        nums.insert(nums.end(), (*it).begin(), (*it).end());
+                }
+                if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
+                    throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
+                                          .arg(maxReusableHistory).arg(ret.size()+nums.size()));
+                }
+                fastRemoveDuplicates(nums);
+                // TODO: Similarly to getHistory the below could use some optimization.  A batched version of hashForTxNum and
+                // is low-hanging fruit for optimization.  Each call to the below takes a shared lock.  /TODO
+                for (auto & num : nums) {
+                    auto hash = hashForTxNum(num).value(); // may throw, but that indicates some database inconsistency. we catch below
+                    ret.emplace_back(ReusableHistoryItem{hash, int(height)});
+                }
+            }
+        }
+        if (unconf) {
+            auto [mempool, lock] = this->mempool();
+
+            std::vector<TxNum> nums;
+            { // append all vectors of txnums
+                auto pRange = mempool.ruBlk.prefixSearch(prefix);
+                for (auto it = pRange.first; it != pRange.second; ++it)
+                    nums.insert(nums.end(), (*it).begin(), (*it).end());
+            }
+            if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
+                throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
+                                      .arg(maxReusableHistory).arg(ret.size()+nums.size()));
+            }
+            fastRemoveDuplicates(nums);
+
+            for (auto & num : nums) {
+                if (num >= mempool.txsOrdered.size())
+                    throw InternalError("TxNum not found in mempool txsOrdered");
+                auto hash = mempool.txsOrdered[num]->hash;
+                ret.emplace_back(ReusableHistoryItem{hash, int(0)});
             }
         }
     } catch (const std::exception &e) {
@@ -2621,6 +2754,13 @@ namespace {
     template <> TXOInfo Deserialize(const QByteArray &ba, bool *ok)
     {
         TXOInfo ret = TXOInfo::fromBytes(ba); // will fail if extra bytes at the end
+        if (ok) *ok = ret.isValid();
+        return ret;
+    }
+
+    template <> QByteArray Serialize(const ReusableBlock &ru) { return ru.toBytes(); }
+    template <> ReusableBlock Deserialize(const QByteArray &ba, bool *ok) {
+        ReusableBlock ret = ReusableBlock::fromBytes(ba); // requires exact size, fails if extra bytes at the end
         if (ok) *ok = ret.isValid();
         return ret;
     }

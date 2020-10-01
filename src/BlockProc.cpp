@@ -19,6 +19,7 @@
 #include "BlockProc.h"
 #include "BTC.h"
 #include "Util.h"
+#include "ReusableBlock.h"
 
 #include "bitcoin/transaction.h"
 
@@ -107,6 +108,7 @@ void PreProcessedBlock::fill(BlockHeight blockHeight, size_t blockSize, const bi
                     unsigned(txIdx),
                     BTC::Hash2ByteArrayRev(in.prevout.GetTxId()),  // .prevoutHash
                     IONum(in.prevout.GetN()), // .prevoutN
+                    ReusableBlock::serializeInput(in),
                     {}, // .parentTxOutIdx (start out undefined)
             });
             estimatedThisSizeBytes += sizeof(InputPt);

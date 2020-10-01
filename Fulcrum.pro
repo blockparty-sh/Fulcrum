@@ -251,6 +251,7 @@ SOURCES += \
     Options.cpp \
     PeerMgr.cpp \
     RecordFile.cpp \
+    ReusableBlock.cpp \
     RollingBloomFilter.cpp \
     RPC.cpp \
     RPCMsgId.cpp \
@@ -289,6 +290,7 @@ HEADERS += \
     Options.h \
     PeerMgr.h \
     RecordFile.h \
+    ReusableBlock.h \
     RollingBloomFilter.h \
     RPC.h \
     RPCMsgId.h \
@@ -307,6 +309,16 @@ HEADERS += \
 
 # Robin Hood unordered_flat_map implememntation (single header and MUCH more efficient than unordered_map!)
 HEADERS += robin_hood/robin_hood.h
+
+# Tessil hat-trie implememntation (header only, supports prefix search and fast serialization/deserialization!)
+HEADERS += \
+    tsl/htrie_set.h \
+    tsl/htrie_map.h \
+    tsl/htrie_hash.h \
+    tsl/array-hash/array_set.h \
+    tsl/array-hash/array_map.h \
+    tsl/array-hash/array_growth_policy.h \
+    tsl/array-hash/array_hash.h
 
 RESOURCES += \
     resources.qrc
