@@ -191,6 +191,9 @@ public:
     /// Thread safe, takes class-level locks.
     std::vector<TxHash> txHashesForBlockInBitcoindMemoryOrder(BlockHeight height) const;
 
+    // TODO document
+    std::vector<TxHash> txHashesForReusableInBitcoindMemoryOrder(BlockHeight height, unsigned prefixLength, QByteArray desiredPrefix) const;
+
     /// Returns the known size of the utxo set (for now this is a signed value -- to debug underflow errors)
     int64_t utxoSetSize() const;
     /// Returns the known size of the utxo set in millions of bytes
@@ -412,6 +415,9 @@ RocksDB: "scripthash_unspent"
   using this scheme. I tried a read-modify-write approach (keying off just HashX) and it was painfully slow on synch.
   This is much faster to synch.
 
+RocksDB: "reusableset"
+  Purpose: store txids referenced by 
+  TODO do we even need this?
 
 A note about ACID: (atomic, consistent, isolated, durable)
 

@@ -471,6 +471,7 @@ struct Storage::Pvt
 
         std::unique_ptr<rocksdb::DB> meta, blkinfo, utxoset,
                                      shist, shunspent, // scripthash_history and scripthash_unspent
+                                     txidset,
                                      undo; // undo (reorg rewind)
     } db;
 
@@ -577,6 +578,7 @@ void Storage::startup()
             { "utxoset", p->db.utxoset, opts, 0.10 },
             { "scripthash_history", p->db.shist, shistOpts, 0.74 },
             { "scripthash_unspent", p->db.shunspent, opts, 0.10 },
+            { "txidset", p->db.txidset, opts, 0.10 },
             { "undo", p->db.undo, opts, 0.02 },
         };
         std::size_t memTotal = 0;
@@ -693,7 +695,7 @@ auto Storage::stats() const -> Stats
     {
         // db stats
         QVariantMap m;
-        for (const auto ptr : { &p->db.blkinfo, &p->db.meta, &p->db.shist, &p->db.shunspent, &p->db.undo, &p->db.utxoset, }) {
+        for (const auto ptr : { &p->db.blkinfo, &p->db.meta, &p->db.shist, &p->db.shunspent, &p->db.undo, &p->db.utxoset, &p->db.txidset }) {
             QVariantMap m2;
             const auto & db = *ptr;
             const QString name = QFileInfo(QString::fromStdString(db->GetName())).fileName();
@@ -1802,6 +1804,13 @@ std::vector<TxHash> Storage::txHashesForBlockInBitcoindMemoryOrder(BlockHeight h
 #endif
                                                     p->lruHeight2HashSizeCalc(ret.size()));
     }
+    return ret;
+}
+
+std::vector<TxHash> Storage::txHashesForReusableInBitcoindMemoryOrder(BlockHeight height, unsigned prefixLength, QByteArray desiredPrefix) const
+{
+    // TODO
+    std::vector<TxHash> ret;
     return ret;
 }
 
