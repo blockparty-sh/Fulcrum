@@ -228,6 +228,7 @@ SOURCES += \
     Options.cpp \
     PeerMgr.cpp \
     RecordFile.cpp \
+    ReusableBlock.cpp \
     RollingBloomFilter.cpp \
     RPC.cpp \
     RPCMsgId.cpp \

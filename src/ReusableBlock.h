@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstring> // for std::memcpy
@@ -50,57 +51,62 @@ struct ReusableHATSerializer {
 
     ReusableHATSerializer() {}
 
-    template <typename T> // required support for uint64_t and float (WHY float? see https://github.com/Tessil/hat-trie note about serialization)
+    template <typename T, typename std::enable_if<std::is_arithmetic<T>::value>::type* = nullptr> // required support for uint64_t and float (WHY float? see https://github.com/Tessil/hat-trie note about serialization)
     void operator()(const T& value) {
-        // Log() << "Serialize()(T) " << sizeof(T);
+        // Log() << "Serialize " << sizeof(T) << " " << value;
         store.append(reinterpret_cast<const char*>(&value), sizeof(T));
     }
 
     void operator()(const PrefixMap::mapped_type& value) { // specialize for our list of TxNums
-        // Log() << "Serialize()(T) " << sizeof(T);
+        // Log() << "SerializeVec " << sizeof(TxNum);
         HATSerializationVectorSizeType size = value.size();
-        store.append(reinterpret_cast<const char*>(&size), sizeof(HATSerializationVectorSizeType));
+        // Log() << "SerializerVec size " << size;
+        store.append(reinterpret_cast<const char*>(&size), sizeof(size));
         store.append(reinterpret_cast<const char*>(value.data()), size * sizeof(TxNum));
     }
 
     void operator()(const char* value, std::size_t value_size) {
-        // Log() << "Serialize()(CharT) " << (value_size * sizeof(CharT));
+        // Log() << "Serialize()(char) " << value_size;
         store.append(reinterpret_cast<const char*>(value), value_size);
     }
 };
 
 struct ReusableHATDeserializer {
     QByteArray store;
-    QByteArray::iterator iter;
+    ptrdiff_t offset;
 
-    ReusableHATDeserializer(QByteArray store): store(store), iter(store.begin()) {}
+    ReusableHATDeserializer(QByteArray store): store(store), offset(0) {}
 
-    template <typename T> // required support for uint64_t and float (see note above)
+    template <typename T,
+    typename std::enable_if<std::is_arithmetic<T>::value>::type* = nullptr> // required support for uint64_t and float (see note above)
     T operator()() {
         T value;
-        Log() << "Deserializer()(T) " << sizeof(T);
-        std::memcpy(reinterpret_cast<char*>(&value), &*iter, sizeof(T));
-        iter += sizeof(T);
+        std::memcpy(reinterpret_cast<char*>(&value), store.begin()+offset, sizeof(T));
+        // Log() << "Deserializer(T) " << sizeof(T) << " " << value;
+        offset += sizeof(T);
         return value;
     }
 
-    PrefixMap::mapped_type operator()() { // specialization on our value type for deserialization
-        Log() << "Deserializer()(T) ";
+    template <typename T,
+    typename std::enable_if<! std::is_arithmetic<T>::value>::type* = nullptr> // invert the above specialzation for vector (TODO make this more clean)
+    T operator()() { // specialization on our value type for deserialization
+        // Log() << "DeserializerVec ";
         HATSerializationVectorSizeType size = 0;
-        std::memcpy(reinterpret_cast<char*>(&size), &*iter, sizeof(HATSerializationVectorSizeType));
-        iter += sizeof(HATSerializationVectorSizeType);
+        std::memcpy(reinterpret_cast<char*>(&size), store.begin()+offset, sizeof(size));
+        offset += sizeof(size);
+        // Log() << "DeserializerVec size " << size;
 
         PrefixMap::mapped_type value(size, 0); // resize our vector so we can copy into it without causing explosion 
-        std::memcpy(value.data(), &*iter, size * sizeof(TxNum));
-        iter += size * sizeof(TxNum);
+        std::memcpy(reinterpret_cast<char*>(value.data()), store.begin()+offset, size * sizeof(TxNum));
+        offset += size * sizeof(TxNum);
 
         return value;
     }
 
     void operator()(char* value_out, std::size_t value_size) {
-        Log() << "Deserializer()(CharT) " << value_size;
-        std::memcpy(value_out, &*iter, value_size);
-        iter += value_size;
+        Log() << "Deserializer()(char) " << value_size;
+        std::memcpy(value_out, store.begin()+offset, value_size);
+        offset += value_size;
     }
 };
 
@@ -113,6 +119,11 @@ struct ReusableBlock {
     constexpr static size_t MAX_BITS = 16; // must be a multiple of NIBBLE_WIDTH
 
     PrefixMap pmap; // Prefix map for efficient searching
+
+    bool isValid() { return true; }
+
+    bool operator==(const ReusableBlock &o) const noexcept { return pmap == o.pmap; }
+    bool operator!=(const ReusableBlock &o) const noexcept { return !operator==(o); }
 
     // perform serialization of a bitcoin input, the prefix of this will be indexed
     static RuHash serializeInput(const bitcoin::CTxIn& input) {
@@ -136,9 +147,8 @@ struct ReusableBlock {
         return pmap.equal_prefix_range(prefix);
     }
 
-    bool isValid() { return true; } // TODO implement
-
     void add(const RuHash& ruHash, const TxNum n) {
+        assert(n != 0); // coinbase - this would be strange..
         // Log() << Util::ToHexFast(ruHash) << ":" << n;
         // we could calculate masks from nibble width but it makes code harder to read
         // split the input hash by every 4 bits
@@ -166,11 +176,10 @@ struct ReusableBlock {
     static ReusableBlock fromBytes(const QByteArray &ba) noexcept {
         ReusableHATDeserializer deserializer(ba);
         ReusableBlock ret;
-        Log() << "Deserialize ReusableBlock " << ba.size();
-        Log() << Util::ToHexFast(ba);
+        // Log() << "Deserialize ReusableBlock " << ba.size();
+        // Log() << Util::ToHexFast(ba);
         ret.pmap = PrefixMap::deserialize(deserializer);
-        Log() << "Deserialized " << ret.pmap.size();
+        // Log() << "Deserialized " << ret.pmap.size();
         return ret;
     }
 };
-
