@@ -21,9 +21,11 @@
 #include "BlockProcTypes.h"
 #include "BTC.h"
 #include "TXO_Compact.h"
+#include "Util.h"
 
-#include "robin_hood/robin_hood.h" // TODO do we need this here or in TXO.h ?
-#include "tsl/htrie-map.h"
+#include "bitcoin/streams.h"
+#include "bitcoin/transaction.h"
+#include "tsl/htrie_map.h"
 
 #include <QString>
 
@@ -33,64 +35,142 @@
 #include <cstdint>
 #include <cstring> // for std::memcpy
 #include <functional> // for std::hash
-#include <optional>
 
 // Our prefixes are lower 4 bits inside char
 using PrefixNibble = char;
+
+// TODO provide description of data here
+using PrefixMap = tsl::htrie_map<PrefixNibble, std::vector<TxNum>, tsl::ah::str_hash<PrefixNibble>, std::uint8_t>;
+
+// we can save some space on disk by using uint32_t - max size is dependent on block, so if blocks overflow uint32::max txs this could fail
+using HATSerializationVectorSizeType = uint32_t;
+
+struct ReusableHATSerializer {
+    QByteArray store;
+
+    ReusableHATSerializer() {}
+
+    template <typename T> // required support for uint64_t and float (WHY float? see https://github.com/Tessil/hat-trie note about serialization)
+    void operator()(const T& value) {
+        // Log() << "Serialize()(T) " << sizeof(T);
+        store.append(reinterpret_cast<const char*>(&value), sizeof(T));
+    }
+
+    void operator()(const PrefixMap::mapped_type& value) { // specialize for our list of TxNums
+        // Log() << "Serialize()(T) " << sizeof(T);
+        HATSerializationVectorSizeType size = value.size();
+        store.append(reinterpret_cast<const char*>(&size), sizeof(HATSerializationVectorSizeType));
+        store.append(reinterpret_cast<const char*>(value.data()), size * sizeof(TxNum));
+    }
+
+    void operator()(const char* value, std::size_t value_size) {
+        // Log() << "Serialize()(CharT) " << (value_size * sizeof(CharT));
+        store.append(reinterpret_cast<const char*>(value), value_size);
+    }
+};
+
+struct ReusableHATDeserializer {
+    QByteArray store;
+    QByteArray::iterator iter;
+
+    ReusableHATDeserializer(QByteArray store): store(store), iter(store.begin()) {}
+
+    template <typename T> // required support for uint64_t and float (see note above)
+    T operator()() {
+        T value;
+        Log() << "Deserializer()(T) " << sizeof(T);
+        std::memcpy(reinterpret_cast<char*>(&value), &*iter, sizeof(T));
+        iter += sizeof(T);
+        return value;
+    }
+
+    PrefixMap::mapped_type operator()() { // specialization on our value type for deserialization
+        Log() << "Deserializer()(T) ";
+        HATSerializationVectorSizeType size = 0;
+        std::memcpy(reinterpret_cast<char*>(&size), &*iter, sizeof(HATSerializationVectorSizeType));
+        iter += sizeof(HATSerializationVectorSizeType);
+
+        PrefixMap::mapped_type value(size, 0); // resize our vector so we can copy into it without causing explosion 
+        std::memcpy(value.data(), &*iter, size * sizeof(TxNum));
+        iter += size * sizeof(TxNum);
+
+        return value;
+    }
+
+    void operator()(char* value_out, std::size_t value_size) {
+        Log() << "Deserializer()(CharT) " << value_size;
+        std::memcpy(value_out, &*iter, value_size);
+        iter += value_size;
+    }
+};
+
 
 /// TODO describe these
 /// This stores prefixes -> txids
 /// The prefixes are the last bytes of sha256 inputs
 struct ReusableBlock {
-    std::vector<TxHash> txHashes; // TODO do we need this, or can we just use the Storage system to grab quickly from block given pos?
-    tsl::htrie_map<PrefixNibble, TxNum> pmap; // Prefix map for efficient searching
+    constexpr static size_t NIBBLE_WIDTH = 4; // half octet
+    constexpr static size_t MAX_BITS = 16; // must be a multiple of NIBBLE_WIDTH
 
-    // bool isValid() const { return txHashes.size() == pmap.size();  }
-    // QString toString() const;
+    PrefixMap pmap; // Prefix map for efficient searching
 
-    // bool operator==(const ReusableBlock &o) const noexcept { return txHashes == o.txHashes && pmap == o.pmap; } // TODO do we need this?
-    // bool operator<(const TXO &o) const noexcept { return txHash < o.txHash && outN < o.outN; }
+    // perform serialization of a bitcoin input, the prefix of this will be indexed
+    static RuHash serializeInput(const bitcoin::CTxIn& input) {
+        bitcoin::CDataStream s(0, 0); // 0,0 is for the version types, which are not relevant for us here
+        input.Serialize(s);
+        RuHash ruHash = BTC::Hash(QByteArray(s.data(), s.size()), false); // double sha2
+        return ruHash;
+    }
 
+    // split hash into little nibbles so we can perform prefix queries on 4 bit sections
+    // in future this can be expanded if we want even more fine grained queries, this (16bit) currently allows for 1/65536
+    static std::string ruHashToPrefix(QByteArray a) {
+        assert(a.size() >= 2);
+        return {
+            (a[0] & 0xF0) >> NIBBLE_WIDTH, a[0] & 0x0F,
+            (a[1] & 0xF0) >> NIBBLE_WIDTH, a[1] & 0x0F
+        };
+    }
 
-    // serialization/deserialization
+    auto prefixSearch(const std::string& prefix) {
+        return pmap.equal_prefix_range(prefix);
+    }
+
+    bool isValid() { return true; } // TODO implement
+
+    void add(const RuHash& ruHash, const TxNum n) {
+        // Log() << Util::ToHexFast(ruHash) << ":" << n;
+        // we could calculate masks from nibble width but it makes code harder to read
+        // split the input hash by every 4 bits
+        // we can use prefix search on htrie to handle wider scans
+        std::string prefix = ReusableBlock::ruHashToPrefix(ruHash);
+
+        auto it = pmap.find(prefix);
+        if (it == pmap.end()) {
+            pmap.insert(prefix, { n });
+        } else {
+            (*it).push_back(n);
+        }
+    }
+
+    // serialization
     QByteArray toBytes() const noexcept {
-        QByteArray ret;
-        if (!isValid()) return ret;
-        const size_t hlen = txHashes.length();
-        ret.resize(int(serSize()));
-        std::memcpy(ret.data(), txHash.data(), size_t(hlen));
-        std::memcpy(ret.data() + hlen, reinterpret_cast<const char *>(&outN), sizeof(outN));
+        ReusableHATSerializer serializer;
+        // Log() << "serialize ReusableBlock";
+        pmap.serialize(serializer);
+        // Log() << "serialized " << serializer.store.size();
+        return serializer.store;
+    }
+
+    // deserialization
+    static ReusableBlock fromBytes(const QByteArray &ba) noexcept {
+        ReusableHATDeserializer deserializer(ba);
+        ReusableBlock ret;
+        Log() << "Deserialize ReusableBlock " << ba.size();
+        Log() << Util::ToHexFast(ba);
+        ret.pmap = PrefixMap::deserialize(deserializer);
+        Log() << "Deserialized " << ret.pmap.size();
         return ret;
     }
-
-    static TXO fromBytes(const QByteArray &ba) noexcept {
-        TXO ret;
-        if (ba.length() != int(serSize())) return ret;
-        ret.txHash = QByteArray(ba.data(), HashLen);
-        // we memcpy rather than reinterpret_cast in order to guard against unaligned access
-        std::memcpy(reinterpret_cast<char *>(&ret.outN), ba.data()+HashLen, sizeof(ret.outN));
-        return ret;
-    }
-
-    static constexpr size_t serSize() noexcept { return HashLen + sizeof(IONum); }
 };
 
-
-namespace std {
-/// specialization of std::hash to be able to add struct TXO to any unordered_set or unordered_map as a key
-template<> struct hash<TXO> {
-    size_t operator()(const TXO &txo) const noexcept {
-        const auto val1 = BTC::QByteArrayHashHasher{}(txo.txHash);
-        const auto val2 = txo.outN;
-        // We must copy the hash bytes and the ionum to a temporary buffer and hash that.
-        // Previously, we put these two items in a struct but it didn't have a unique
-        // objected repr and that led to bugs.  See Fulcrum issue #47 on GitHub.
-        std::array<std::byte, sizeof(val1) + sizeof(val2)> buf;
-        std::memcpy(buf.data()               , reinterpret_cast<const char *>(&val1), sizeof(val1));
-        std::memcpy(buf.data() + sizeof(val1), reinterpret_cast<const char *>(&val2), sizeof(val2));
-        // on 32-bit: below hashes the above 6-byte buffer using MurMur3
-        // on 64-bit: below hashes the above 10-byte buffer using CityHash64
-        return Util::hashForStd(buf);
-    }
-};
-} // namespace std

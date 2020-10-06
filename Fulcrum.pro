@@ -267,6 +267,7 @@ HEADERS += \
     Options.h \
     PeerMgr.h \
     RecordFile.h \
+    ReusableBlock.h \
     RollingBloomFilter.h \
     RPC.h \
     RPCMsgId.h \

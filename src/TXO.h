@@ -22,7 +22,7 @@
 #include "BTC.h"
 #include "TXO_Compact.h"
 
-#include "robin_hood/robin_hood.h"
+#include "robin_hood/robin_hood.h" // TODO do we need this here?
 
 #include <QString>
 

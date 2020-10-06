@@ -348,13 +348,13 @@ namespace {
     /// used internally by RPC methods. Given a prefixHex, ensure it's hex data and nothing else.
     /// Returns bytes of valid hex decoded data or an empty QByteArray on failure.
     // TODO is this even right?
-    QByteArray validatePrefixHex(const QString & prefixHex, const int DataLen = HashLen) {
-        QByteArray ret = prefixHex.trimmed().left(prefixHex.size() / 2).toUtf8();
-        // ugh, QByteArray returns dummy bytes at the end if it can't fully parse. So we have to check the original
-        // hash byte length as well.
-        if (ret.length() != prefixHex.size() / 2 || (ret = QByteArray::fromHex(ret)).length() != prefixHex.size() / 2)
-            ret.clear();
-        return ret;
+    QByteArray validatePrefixHex(const QString & prefixHex) {
+        bool ok = false;
+        prefixHex.toInt(&ok, 16);
+        if (! ok) {
+            return QByteArray();
+        }
+        return QByteArray::fromHex(prefixHex.toUtf8());
     }
 }
 
@@ -1824,7 +1824,7 @@ void Server::rpc_blockchain_utxo_get_info(Client *c, const RPC::Message &m)
 void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &m)
 {
     QVariantList l = m.paramsList();
-    assert(l.size() >= 4);
+    assert(l.size() >= 3);
     bool ok;
     const unsigned height = l.front().toUInt(&ok); // arg0
     if (!ok || height >= Storage::MAX_HEADERS)
@@ -1832,24 +1832,22 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     unsigned count = l[1].toUInt(&ok); // arg1
     if (!ok || count >= Storage::MAX_HEADERS)
         throw RPCError("Invalid count argument; expected non-negative numeric value");
-    const unsigned prefixLength = l[2].toUInt(&ok); // arg2
-    static constexpr unsigned MAX_PREFIX_SIZE = 16; ///< TODO: make this cofigurable.
-    if (!ok || prefixLength > MAX_PREFIX_SIZE)
-        throw RPCError(QString("prefix_length %1 must be <= %2").arg(prefixLength, MAX_PREFIX_SIZE));
-    QByteArray desiredPrefix = validatePrefixHex( l[3].toString() ); // arg3
-    if (desiredPrefix.isEmpty())
-        throw RPCError("Invalid desired_prefix argument; expected non-empty byte array");
-    if (desiredPrefix.size() < 2)
-        desiredPrefix.append(static_cast<char>(0x00));
+    QByteArray desiredPrefix = validatePrefixHex( l[2].toString() ); // arg2
+    Log() << "desiredPrefixSize: " << desiredPrefix.size();
+    if (desiredPrefix.size() > 4)
+        throw RPCError("Invalid desiredPrefix argument; expected length < 5");
+    for (auto c : desiredPrefix)
+        if (c >= 0x10)
+            throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
     bool unspentOnly = false;
-    if (l.size() >= 5) { //optional arg4
+    if (l.size() >= 4) { //optional arg3
         const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l[3] );
         if (!argOk)
             throw RPCError("Invalid unspentOnly argument; expected boolean");
         unspentOnly = arg;
     }
     bool compact = false;
-    if (l.size() == 6) { //optional arg5
+    if (l.size() == 5) { //optional arg4
         const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
         if (!argOk)
             throw RPCError("Invalid compact argument; expected boolean");
@@ -1861,47 +1859,23 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     static constexpr unsigned MAX_COUNT = 2016; ///< TODO: make this cofigurable. this is the current electrumx limit, for now.
     count = std::min(std::min(unsigned(tip+1) - height, count), MAX_COUNT);
     ok = true;
-    // generic_do_async -- TODO
 
-    generic_do_async(c, m.id, [height, count, desiredPrefix, prefixLength, unspentOnly, compact, this] () mutable {
-        std::reverse(desiredPrefix.begin(), desiredPrefix.end()); // we need to compare to bitcoind memory order so reverse desired prefix
+    Log() << "rpc_blockchain_reusable_get_history " << height << " " << count << " " << " " << Util::ToHexFast(desiredPrefix); 
 
-        std::vector<TxHash> txHashes;
+    generic_do_async(c, m.id, [height, count, desiredPrefix, unspentOnly, compact, this] () mutable {
+        QVariantList resp;
         for (BlockHeight h = height; h < height + count; ++h) {
-            // TODO this is just for testing - we will want to look these up in real index
-            // auto blockTxHashes = storage->txHashesForBlockInBitcoindMemoryOrder(h);
-            auto blockTxHashes = storage->txHashesForReusableInBitcoindMemoryOrder(height, prefixLength, desiredPrefix);
-            decltype(blockTxHashes) filteredBlockTxHashes;
-
-            // TODO this actually has to look at "at least one qualifying input's double sha256 hash matching the desired prefix string"
-            std::copy_if(blockTxHashes.begin(), blockTxHashes.end(), std::back_inserter(txHashes), [desiredPrefix, prefixLength](const TxHash& h) -> bool {
-                const unsigned alo = h[0];
-                const unsigned ahi = h[1];
-                const unsigned blo = desiredPrefix[0];
-                const unsigned bhi = desiredPrefix[1];
-
-                // create masks for the size of our prefix for both for low and high bytes
-                const unsigned m_ = (1 << prefixLength) - 1;
-                const unsigned mlo = m_ & 0xFF;
-                const unsigned mhi = (m_ >> 8) & 0xFF;
-
-                // compare the masked inputs for equality
-                // we can add these without fear of overflow because at most it is 0xFF + 0xFF compared to int
-                return ((alo & mlo) ^ (blo & mlo) + (ahi & mhi) ^ (bhi & mhi) == 0);
-            });
+            std::vector<TxHash> txHashes = storage->txHashesForReusableInBitcoindMemoryOrder(h, desiredPrefix);
+            // TODO unspentOnly, compact handling 
+            Log() << "total hashes " << txHashes.size();
+            for (auto & txHash : txHashes) {
+                Log() << Util::ToHexFast(txHash) << " " << h;
+                resp.push_back(QVariantMap{
+                    { "tx_hash" , Util::ToHexFast(txHash) },
+                    { "height", h },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
+                });
+            }
         }
-
-        if (compact) {
-            // TODO return here the txids only
-            // TODO if compact return outpoints here??? (clarify with uname / jonald)
-        }
-
-        // TODO ELSE we return the full txs here
-        // if unspent/utxo set we just return utxos? (clarify with uname / jonald)
-
-        QVariantMap resp = {
-            // TODO ^^
-        };
 
         return resp;
     });
@@ -1910,19 +1884,17 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
 void Server::rpc_blockchain_reusable_subscribe(Client *c, const RPC::Message &m)
 {
     QVariantList l = m.paramsList();
-    assert(l.size() >= 2);
-    bool ok;
-    const unsigned prefixLength = l[2].toUInt(&ok); // arg0
-    static constexpr unsigned MAX_PREFIX_SIZE = 16; ///< TODO: make this cofigurable.
-    if (!ok || prefixLength > MAX_PREFIX_SIZE)
-        throw RPCError(QString("prefix_length %1 must be <= %2").arg(prefixLength, MAX_PREFIX_SIZE));
-    QByteArray desiredPrefix = validatePrefixHex( l[3].toString() ); // arg1
-    if (desiredPrefix.isEmpty())
-        throw RPCError("Invalid desired_prefix argument; expected non-empty byte array");
-    if (desiredPrefix.size() < 2)
-        desiredPrefix.append(static_cast<char>(0x00));
+    assert(l.size() >= 1);
+    
+    QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
+    Log() << "desiredPrefixSize: " << desiredPrefix.size();
+    if (desiredPrefix.size() > 4)
+        throw RPCError("Invalid desiredPrefix argument; expected length < 5");
+    for (auto c : desiredPrefix)
+        if (c >= 0x10)
+            throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
     bool compact = false;
-    if (l.size() == 3) { //optional arg2
+    if (l.size() == 2) { //optional arg1
         const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
         if (!argOk)
             throw RPCError("Invalid compact argument; expected boolean");
@@ -1991,8 +1963,8 @@ HEY_COMPILER_PUT_STATIC_HERE(Server::StaticData::registry){
 
     { {"blockchain.utxo.get_info",          true,               false,    PR{2,2},                    },          MP(rpc_blockchain_utxo_get_info) },
 
-    { {"blockchain.reusable.get_history",   true,               false,    PR{4,6},                    },          MP(rpc_blockchain_reusable_get_history) },
-    { {"blockchain.reusable.subscribe",     true,               false,    PR{2,3},                    },          MP(rpc_blockchain_reusable_subscribe) },
+    { {"blockchain.reusable.get_history",   true,               false,    PR{3,5},                    },          MP(rpc_blockchain_reusable_get_history) },
+    { {"blockchain.reusable.subscribe",     true,               false,    PR{1,2},                    },          MP(rpc_blockchain_reusable_subscribe) },
     { {"blockchain.reusable.unsubscribe",   true,               false,    PR{1,1},                    },          MP(rpc_blockchain_reusable_unsubscribe) },
 
     { {"mempool.get_fee_histogram",         true,               false,    PR{0,0},                    },          MP(rpc_mempool_get_fee_histogram) },

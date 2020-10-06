@@ -1,13 +1,15 @@
-Our index is rocksdb backed with a key of block height pointing to a hat-trie of prefixnibbles pointing towards TxNum
+Our index is rocksdb backed with a key of block height pointing to a hat-trie of prefixnibbles pointing towards a set of TxNums
 
 We point to TxNum's instead of TxHash's themselves to preserve memory and prevent memory explosion for worst case.
 
-This provides very efficient and cache-friendly prefix searching as well as extremely fast serialization/deserialization.
+We store a vector, this could be further optimized with a small size optimized vector as there are around 1/65536 block txs inside each full 16 bit prefix, so there is generally only 1 tx per vector with current block sizes
+
+
+HAT-trie provides very efficient and cache-friendly prefix searching as well as extremely fast serialization/deserialization.
 
 
 height -> {
-    vec{idx => txid}
-    trie{prefix => idx}
+    trie{prefix => vec{idx}}
 }
 
 ----
@@ -26,4 +28,22 @@ ReusableBlock
     htrie_map<PrefixNibble, TxNum>  
 };
 
-we might be able to use the Storage system rather thna storing all txids inside these reusableblocks
+---
+
+for each lookup we query the reusableblock then use the indexes of this during a full blockfetch to grab relevant txs
+similarly to blockchain.transaction.get_id_from_pos
+
+
+---
+
+
+**get_history**
+
+height UINT block to start at
+count UINT how many blocks to scan, max 2016
+prefix HEXSTRING each hex digit must be less than 16 (4 bits each)
+unspentonly BOOL optional, default FALSE
+compact BOOL optional, default FALSE
+
+
+**subscribe**
