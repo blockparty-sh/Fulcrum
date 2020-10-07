@@ -355,14 +355,14 @@ namespace {
         for (size_t i=0; i<prefixPreProcessed.size(); ++i) {
             const char c = prefixPreProcessed.at(i);
 
-			if (c >= '0' && c <= '9')
-				a[i] = c - '0';
-			else if (c >= 'A' && c <= 'F')
-				a[i] = c - 'A' + 10;
-			else if (c >= 'a' && c <= 'f')
-				a[i] = c - 'a' + 10;
-			else
-				return std::nullopt;
+            if (c >= '0' && c <= '9')
+                a[i] = c - '0';
+            else if (c >= 'A' && c <= 'F')
+                a[i] = c - 'A' + 10;
+            else if (c >= 'a' && c <= 'f')
+                a[i] = c - 'a' + 10;
+            else
+                return std::nullopt;
         }
         return a;
     }
@@ -1856,9 +1856,9 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     if (!ok || count >= Storage::MAX_HEADERS)
         throw RPCError("Invalid count argument; expected non-negative numeric value");
     const std::optional<std::string> prefix = decodeReusablePrefixHex( l[2].toString() ); // arg2
-	if (!prefix.has_value())
-		throw RPCError("Invalid prefix argument; expected hex string");
-	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+    if (!prefix.has_value())
+        throw RPCError("Invalid prefix argument; expected hex string");
+    if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
         throw RPCError("Invalid prefix argument; too long");
     bool unspentOnly = false;
     if (l.size() == 4) { //optional arg3
@@ -1883,9 +1883,9 @@ void Server::rpc_blockchain_reusable_get_mempool(Client *c, const RPC::Message &
     QVariantList l = m.paramsList();
     assert(l.size() >= 1);
     const std::optional<std::string> prefix = decodeReusablePrefixHex( l[0].toString() ); // arg0
-	if (!prefix.has_value())
-		throw RPCError("Invalid prefix argument; expected hex string");
-	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+    if (!prefix.has_value())
+        throw RPCError("Invalid prefix argument; expected hex string");
+    if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
         throw RPCError("Invalid prefix argument; too long");
     bool unspentOnly = false;
     if (l.size() == 2) { //optional arg3
@@ -1905,9 +1905,9 @@ void Server::rpc_blockchain_reusable_subscribe(Client *c, const RPC::Message &m)
     QVariantList l = m.paramsList();
     assert(l.size() >= 1);
     const std::optional<std::string> prefix = decodeReusablePrefixHex( l[0].toString() ); // arg0
-	if (!prefix.has_value())
-		throw RPCError("Invalid prefix argument; expected hex string");
-	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+    if (!prefix.has_value())
+        throw RPCError("Invalid prefix argument; expected hex string");
+    if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
         throw RPCError("Invalid prefix argument; too long");
 
     // TODO should we refactor the subscribe / subsmgr code to accept ru subscriptions

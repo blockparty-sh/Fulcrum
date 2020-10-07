@@ -1970,10 +1970,10 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
                 for (auto it = pRange.first; it != pRange.second; ++it)
                     nums.insert(nums.end(), (*it).begin(), (*it).end());
             }
-			if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
-				throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
-									  .arg(maxReusableHistory).arg(ret.size()+nums.size()));
-			}
+            if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
+                throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
+                                      .arg(maxReusableHistory).arg(ret.size()+nums.size()));
+            }
             fastRemoveDuplicates(nums);
 
             for (auto & num : nums) {
