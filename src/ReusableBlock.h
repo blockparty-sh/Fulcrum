@@ -89,7 +89,7 @@ struct ReusableHATDeserializer {
         std::memcpy(reinterpret_cast<char*>(&size), store.begin()+offset, sizeof(size));
         offset += sizeof(size);
 
-        PrefixMap::mapped_type value(size, 0); // resize our vector so we can copy into it without causing explosion 
+        PrefixMap::mapped_type value(size, 0); // resize our vector so we can copy into it without causing explosion
         std::memcpy(reinterpret_cast<char*>(value.data()), store.begin()+offset, size * sizeof(TxNum));
         offset += size * sizeof(TxNum);
 

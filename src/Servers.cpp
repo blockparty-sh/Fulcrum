@@ -1836,7 +1836,7 @@ QVariantList Server::getReusableHistoryCommon(const BlockHeight height, const si
     for (const auto & item : items) {
         QVariantMap m{
             { "tx_hash" , Util::ToHexFast(item.hash) }, // TODO this should be full tx
-            { "height", int(item.height) },  // TODO -- this is note from getHistory, should we have same semantics::::     confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
+            { "height", int(item.height) },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
         };
         resp.push_back(m);
     }

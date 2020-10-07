@@ -1929,7 +1929,7 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
                 if (num >= mempool.txsOrdered.size())
                     throw InternalError("num not found in mempool txsOrdered");
                 auto hash = mempool.txsOrdered[num]->hash;
-                ret.emplace_back(ReusableHistoryItem{hash, int(-1)});
+                ret.emplace_back(ReusableHistoryItem{hash, int(0)});
             }
         }
     } catch (const std::exception &e) {

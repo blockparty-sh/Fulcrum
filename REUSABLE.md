@@ -25,7 +25,7 @@ using TxHashIdx = size_t; // index of txHashes (should this be 4bytes for memory
 ReusableBlock
 {
     std::vector<TxHash> txHashes;
-    htrie_map<PrefixNibble, TxNum>  
+    htrie_map<PrefixNibble, TxNum>
 };
 
 ---
@@ -41,7 +41,7 @@ What is prefix format and why do we do prefix using weird hexstring format?
 This is simplest format. Everything can use standard hex encoding/decoding.
 (Maybe we wanna do just single digit though?)
 
-The 4 bit size is enforced 
+The 4 bit size is enforced
 
 
 
