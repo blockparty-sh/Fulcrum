@@ -426,7 +426,7 @@ private:
     /// Returns the QVariantMap suitable for placing into the resulting response.
     QVariantList getHistoryCommon(const HashX & sh, bool mempoolOnly);
 
-    /// called from reusable.get_mempool and reusable.get_history 
+    /// called from reusable.get_mempool and reusable.get_history
     /// TODO document more (especially how height and count can/should be 0 for mempool only search)
     QVariantList getReusableHistoryCommon(const BlockHeight height, const size_t count, const std::string& prefix, bool mempoolOnly);
 
