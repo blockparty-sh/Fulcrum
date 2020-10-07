@@ -1938,12 +1938,6 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
             static const QString err("Error retrieving reusable history for a prefix");
 
             for (BlockHeight height = start_height; height < start_height + count; ++height) {
-                /* // TODO add this check
-                if (UNLIKELY(nums.size() > maxHistory)) {
-                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
-                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(nums.size()));
-                }
-                */
                 auto ruBlk = GenericDBGetFailIfMissing<ReusableBlock>(p->db.rublk2trie.get(), height,
                     "Failed to read reusuable trie from the rublk2trie db", false, p->db.defReadOpts);
                 // TODO add shortcut here if length is 0, we then quick add all txs in a block here
@@ -1953,6 +1947,10 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
                     auto pRange = ruBlk.prefixSearch(prefix);
                     for (auto it = pRange.first; it != pRange.second; ++it)
                         nums.insert(nums.end(), (*it).begin(), (*it).end());
+                }
+                if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
+                    throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
+                                          .arg(maxReusableHistory).arg(ret.size()+nums.size()));
                 }
                 fastRemoveDuplicates(nums);
                 // TODO: Similarly to getHistory the below could use some optimization.  A batched version of hashForTxNum and
@@ -1972,11 +1970,15 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
                 for (auto it = pRange.first; it != pRange.second; ++it)
                     nums.insert(nums.end(), (*it).begin(), (*it).end());
             }
+			if (UNLIKELY(ret.size()+nums.size() > maxReusableHistory)) {
+				throw HistoryTooLarge(QString("History for prefix exceeds MaxReusableHistory %1 with %2 items!")
+									  .arg(maxReusableHistory).arg(ret.size()+nums.size()));
+			}
             fastRemoveDuplicates(nums);
 
             for (auto & num : nums) {
                 if (num >= mempool.txsOrdered.size())
-                    throw InternalError("num not found in mempool txsOrdered");
+                    throw InternalError("TxNum not found in mempool txsOrdered");
                 auto hash = mempool.txsOrdered[num]->hash;
                 ret.emplace_back(ReusableHistoryItem{hash, int(0)});
             }
