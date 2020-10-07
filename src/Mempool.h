@@ -19,6 +19,7 @@
 #pragma once
 
 #include "BlockProcTypes.h"
+#include "ReusableBlock.h"
 #include "TXO.h"
 
 #include "bitcoin/amount.h"
@@ -109,6 +110,9 @@ struct Mempool
     // -- Data members of struct Mempool --
     TxMap txs;
     HashXTxMap hashXTxs;
+    // TODO add this static TxNum ruLastInsertedIdx = 0; // store this as key of ruTxInsertOrder
+    robin_hood::unordered_flat_map<TxNum, TxHash> ruTxInsertOrder; // store the mempool items received in order so our ruBlk has 
+    ReusableBlock ruBlk;
 
     inline void clear() {
         // Enforce a little hysteresis about what sizes we may need in the future; reserve 75% of the last size we saw.
@@ -120,8 +124,12 @@ struct Mempool
         const auto txsSize = txs.size(), hxSize = hashXTxs.size();
         txs.clear();
         hashXTxs.clear();
+        // TODO enable this ruLastInsertedIdx = 0; // we are resetting everything that uses this so we can safely reset to 0
+        ruTxInsertOrder.clear();
+        ruBlk.clear();
         txs.reserve(size_t(txsSize*0.75));
         hashXTxs.reserve(size_t(hxSize*0.75));
+        ruTxInsertOrder.reserve(size_t(hxSize*0.75));
     }
 
     // -- Fee histogram support (used by mempool.get_fee_histogram RPC) --

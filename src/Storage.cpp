@@ -1870,56 +1870,70 @@ std::vector<TxHash> Storage::txHashesForBlockInBitcoindMemoryOrder(BlockHeight h
     return ret;
 }
 
-std::vector<TxHash> Storage::txHashesForReusableInBitcoindMemoryOrder(BlockHeight height, QByteArray desiredPrefix) const
-{
-    assert(bool(p->db.rublk2trie));
-    static const QString errMsgPrefix("Failed to read reusuable trie from the rublk2trie db");
-    Log() << "GenericDBGet PRE";
-    auto ru = GenericDBGetFailIfMissing<ReusableBlock>(p->db.rublk2trie.get(), height, errMsgPrefix, false, p->db.defReadOpts);
-    Log() << "GenericDBGet - SUCCESS";
+auto Storage::getReusableHistory(const BlockHeight start_height, const size_t count, const std::string & prefix, bool conf, bool unconf) const -> ReusableHistory
+{ // TODO
+    ReusableHistory ret;
+    const size_t maxReusableHistory = size_t(options->maxReusableHistory);
+    if (prefix.size() > ReusableBlock::MAX_PREFIX_SIZE)
+        return ret;
+    try {
+        SharedLockGuard g(p->blocksLock);  // makes sure history doesn't mutate from underneath our feet
+        if (conf) {
+            assert(bool(p->db.rublk2trie));
+            static const QString err("Error retrieving reusable history for a prefix");
 
-    // defensive programming
-    if (UNLIKELY(desiredPrefix.size() > 4))
-        throw InternalError("desiredPrefix must be smaller than 5 during call to txHashesForReusableInBitcoindMemoryOrder");
-
-    // get properly prepared prefix for searching in trie
-    const std::string prefix(desiredPrefix.constData(), desiredPrefix.length());
-    // get all txhashes in the block, we will index into this to return a subset
-    const std::vector<TxHash> blockTxHashes = txHashesForBlockInBitcoindMemoryOrder(height);
-    // Log() << "prefixLength " << prefixLength;
-    if (desiredPrefix.size() == 0) // shortcut if length is 0, we then return all txhashes in a block
-        return { blockTxHashes.begin() + 1, blockTxHashes.end() };
-
-    std::vector<TxNum> prefixTxNums;
-    // Log() << "prefixSearch ATTEMPT " << prefix << prefixLength;
-    auto pRange = ru.prefixSearch(prefix);
-    // Log() << "prefixSearch SUCCESS " << prefixLength;
-    for (auto it = pRange.first; it != pRange.second; ++it) {
-        Log() << "prefixSearch key " << it.key();
-        // Log() << "prefixSearch value " << it.value();
-
-        const auto idxs = *it;
-        // Log() << "list item ";
-        for (TxNum idx : idxs) {
-            if (UNLIKELY(idx >= blockTxHashes.size()))
-                throw InternalError(QString("tx idx out of range of block %1, your datadir must be corrupted").arg(height));
-            // Log() << "prefix: " << idx;
-            prefixTxNums.push_back(idx);
+            for (BlockHeight height = start_height; height < start_height + count; ++height) {
+                /* // TODO add this check
+                if (UNLIKELY(nums.size() > maxHistory)) {
+                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
+                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(nums.size()));
+                }
+                */
+                auto ru = GenericDBGetFailIfMissing<ReusableBlock>(p->db.rublk2trie.get(), height,
+                    "Failed to read reusuable trie from the rublk2trie db", false, p->db.defReadOpts);
+                // get all txhashes in the block, we will index into this to return a subset
+                const std::vector<TxHash> txHashes = txHashesForBlockInBitcoindMemoryOrder(height);
+                // TODO add shortcut here if length is 0, we then quick add all txs in a block here
+                // get properly prepared prefix for searching in trie
+                std::vector<TxNum> prefixTxNums;
+                auto pRange = ru.prefixSearch(prefix);
+                for (auto it = pRange.first; it != pRange.second; ++it) {
+                    const auto idxs = *it;
+                    for (TxNum idx : idxs) {
+                        if (UNLIKELY(idx >= txHashes.size()))
+                            throw InternalError(QString("tx idx out of range of block %1, your datadir must be corrupted").arg(height));
+                        prefixTxNums.push_back(idx);
+                    }
+                }
+                // fast remove duplicates TODO compare to unordered_set (this should be faster with good sort)
+                // this should use radix sort
+                std::sort(prefixTxNums.begin(), prefixTxNums.end());
+                prefixTxNums.erase(std::unique(prefixTxNums.begin(), prefixTxNums.end()), prefixTxNums.end());
+                // convert [TxNum] -> [TxHash]
+                for (auto & txNum : prefixTxNums) {
+                    ret.emplace_back(ReusableHistoryItem{txHashes[txNum], int(height)});
+                }
+            }
         }
+        if (unconf) {
+            auto [mempool, lock] = this->mempool();
+            /*
+            if (auto it = mempool.hashXTxs.find(hashX); it != mempool.hashXTxs.end()) {
+                const auto & txvec = it->second;
+                const size_t total = ret.size() + txvec.size();
+                if (UNLIKELY(total > maxHistory)) {
+                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
+                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(total));
+                }
+                ret.reserve(total);
+                for (const auto & tx : txvec)
+                    ret.emplace_back(HistoryItem{tx->hash, tx->hasUnconfirmedParentTx ? -1 : 0, tx->fee});
+            }
+            */
+        }
+    } catch (const std::exception &e) {
+        Warning(Log::Magenta) << __func__ << ": " << e.what();
     }
-    // Log() << "sort";
-    // fast remove duplicates TODO compare to unordered_set (this should be faster with good sort)
-    // this should use radix sort
-    std::sort(prefixTxNums.begin(), prefixTxNums.end());
-    // Log() << "erase";
-    prefixTxNums.erase(std::unique(prefixTxNums.begin(), prefixTxNums.end()), prefixTxNums.end());
-    // convert [TxNum] -> [TxHash]
-    // Log() << "convert " << prefixTxNums.size();
-    std::vector<TxHash> ret;
-    ret.reserve(prefixTxNums.size());
-    std::transform(prefixTxNums.begin(), prefixTxNums.end(), std::back_inserter(ret),
-        [&blockTxHashes](const TxNum idx) -> TxHash { return blockTxHashes[idx]; });
-    // Log() << "done";
     return ret;
 }
 

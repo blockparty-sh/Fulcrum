@@ -347,14 +347,22 @@ namespace {
 
     /// used internally by RPC methods. Given a prefixHex, ensure it's hex data and nothing else.
     /// Returns bytes of valid hex decoded data or an empty QByteArray on failure.
-    // TODO is this even right?
+    // TODO should this be single char hex
     QByteArray validatePrefixHex(const QString & prefixHex) {
         bool ok = false;
         prefixHex.toInt(&ok, 16);
         if (! ok) {
             return QByteArray();
         }
-        return QByteArray::fromHex(prefixHex.toUtf8());
+        QByteArray a = QByteArray::fromHex(prefixHex.toUtf8());
+        /* // TODO perform these checks
+        for (auto c : a)
+            if (c >= 0x10)
+                throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
+        if (desiredPrefix.size() > 4)
+            throw RPCError("Invalid desiredPrefix argument; expected length < 5");
+        */
+        return a;
     }
 }
 
@@ -1820,6 +1828,20 @@ void Server::rpc_blockchain_utxo_get_info(Client *c, const RPC::Message &m)
     });
 }
 
+QVariantList Server::getReusableHistoryCommon(const BlockHeight height, const size_t count, const QByteArray& desiredPrefix, bool mempoolOnly)
+{
+    QVariantList resp;
+    const std::string prefix(desiredPrefix.constData(), desiredPrefix.length());
+    const auto items = storage->getReusableHistory(height, count, prefix, !mempoolOnly, true);
+    for (const auto & item : items) {
+        QVariantMap m{
+            { "tx_hash" , Util::ToHexFast(item.hash) }, // TODO this should be full tx
+            { "height", int(item.height) },  // TODO -- this is note from getHistory, should we have same semantics::::     confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
+        };
+        resp.push_back(m);
+    }
+    return resp;
+}
 
 void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &m)
 {
@@ -1833,69 +1855,41 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     if (!ok || count >= Storage::MAX_HEADERS)
         throw RPCError("Invalid count argument; expected non-negative numeric value");
     QByteArray desiredPrefix = validatePrefixHex( l[2].toString() ); // arg2
-    Log() << "desiredPrefixSize: " << desiredPrefix.size();
-    if (desiredPrefix.size() > 4)
-        throw RPCError("Invalid desiredPrefix argument; expected length < 5");
-    for (auto c : desiredPrefix)
-        if (c >= 0x10)
-            throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
     bool unspentOnly = false;
-    if (l.size() >= 4) { //optional arg3
-        const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l[3] );
+    if (l.size() == 4) { //optional arg3
+        const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
         if (!argOk)
             throw RPCError("Invalid unspentOnly argument; expected boolean");
         unspentOnly = arg;
-    }
-    bool compact = false;
-    if (l.size() == 5) { //optional arg4
-        const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
-        if (!argOk)
-            throw RPCError("Invalid compact argument; expected boolean");
-        compact = arg;
     }
 
     const auto tip = storage->latestTip().first;
     if (tip < 0) throw InternalError("chain height is negative");
     static constexpr unsigned MAX_COUNT = 2016; ///< TODO: make this cofigurable. this is the current electrumx limit, for now.
     count = std::min(std::min(unsigned(tip+1) - height, count), MAX_COUNT);
-    ok = true;
 
-    Log() << "rpc_blockchain_reusable_get_history " << height << " " << count << " " << " " << Util::ToHexFast(desiredPrefix); 
+    generic_do_async(c, m.id, [height, count, desiredPrefix, this] {
+        return getReusableHistoryCommon(height, count, desiredPrefix, false);
+    });
+}
 
-    std::vector<TxHash> txHashes;
-    generic_do_async(c, m.id, [height, count, desiredPrefix, unspentOnly, compact, this] () mutable {
-        for (BlockHeight h = height; h < height + count; ++h) {
-            std::vector<TxHash> blockTxHashes = storage->txHashesForReusableInBitcoindMemoryOrder(h, desiredPrefix);
-            txHashes.insert(txHashes.end(), blockTxHashes.begin(), blockTxHashes.end());
-        }
+void Server::rpc_blockchain_reusable_get_mempool(Client *c, const RPC::Message &m)
+{
+    QVariantList l = m.paramsList();
+    assert(l.size() >= 1);
+    bool ok;
+    QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
+    Log() << "desiredPrefixSize: " << desiredPrefix.size();
+    bool unspentOnly = false;
+    if (l.size() == 2) { //optional arg3
+        const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
+        if (!argOk)
+            throw RPCError("Invalid unspentOnly argument; expected boolean");
+        unspentOnly = arg;
+    }
 
-        Log() << "total hashes " << txHashes.size();
-
-        if (compact) {
-            QVariantList resp;
-            for (auto & txHash : txHashes) {
-                Log() << Util::ToHexFast(txHash) << " " << h;
-                resp.push_back(QVariantMap{
-                    { "tx_hash" , Util::ToHexFast(txHash) },
-                    { "height", h },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
-                });
-            }
-            return resp;
-        }
-
-        if (unspentOnly) {
-            throw RPCError("unspentOnly not implemented yet");
-        }
-
-        // TODO this should be full txs
-        for (auto & txHash : txHashes) {
-            Log() << Util::ToHexFast(txHash) << " " << h;
-            resp.push_back(QVariantMap{
-                { "tx_hash" , Util::ToHexFast(txHash) },
-                { "height", h },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
-            });
-        }
-
+    generic_do_async(c, m.id, [desiredPrefix, this] {
+        return getReusableHistoryCommon(0, 0, desiredPrefix, true);
     });
 }
 
@@ -1906,18 +1900,6 @@ void Server::rpc_blockchain_reusable_subscribe(Client *c, const RPC::Message &m)
     
     QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
     Log() << "desiredPrefixSize: " << desiredPrefix.size();
-    if (desiredPrefix.size() > 4)
-        throw RPCError("Invalid desiredPrefix argument; expected length < 5");
-    for (auto c : desiredPrefix)
-        if (c >= 0x10)
-            throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
-    bool compact = false;
-    if (l.size() == 2) { //optional arg1
-        const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
-        if (!argOk)
-            throw RPCError("Invalid compact argument; expected boolean");
-        compact = arg;
-    }
 
     // TODO should we refactor the subscribe / subsmgr code to accept ru subscriptions
 }
@@ -1981,8 +1963,9 @@ HEY_COMPILER_PUT_STATIC_HERE(Server::StaticData::registry){
 
     { {"blockchain.utxo.get_info",          true,               false,    PR{2,2},                    },          MP(rpc_blockchain_utxo_get_info) },
 
-    { {"blockchain.reusable.get_history",   true,               false,    PR{3,5},                    },          MP(rpc_blockchain_reusable_get_history) },
-    { {"blockchain.reusable.subscribe",     true,               false,    PR{1,2},                    },          MP(rpc_blockchain_reusable_subscribe) },
+    { {"blockchain.reusable.get_history",   true,               false,    PR{3,4},                    },          MP(rpc_blockchain_reusable_get_history) },
+    { {"blockchain.reusable.get_mempool",   true,               false,    PR{1,2},                    },          MP(rpc_blockchain_reusable_get_mempool) },
+    { {"blockchain.reusable.subscribe",     true,               false,    PR{1,1},                    },          MP(rpc_blockchain_reusable_subscribe) },
     { {"blockchain.reusable.unsubscribe",   true,               false,    PR{1,1},                    },          MP(rpc_blockchain_reusable_unsubscribe) },
 
     { {"mempool.get_fee_histogram",         true,               false,    PR{0,0},                    },          MP(rpc_mempool_get_fee_histogram) },

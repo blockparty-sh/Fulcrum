@@ -53,20 +53,16 @@ struct ReusableHATSerializer {
 
     template <typename T, typename std::enable_if<std::is_arithmetic<T>::value>::type* = nullptr> // required support for uint64_t and float (WHY float? see https://github.com/Tessil/hat-trie note about serialization)
     void operator()(const T& value) {
-        // Log() << "Serialize " << sizeof(T) << " " << value;
         store.append(reinterpret_cast<const char*>(&value), sizeof(T));
     }
 
     void operator()(const PrefixMap::mapped_type& value) { // specialize for our list of TxNums
-        // Log() << "SerializeVec " << sizeof(TxNum);
         HATSerializationVectorSizeType size = value.size();
-        // Log() << "SerializerVec size " << size;
         store.append(reinterpret_cast<const char*>(&size), sizeof(size));
         store.append(reinterpret_cast<const char*>(value.data()), size * sizeof(TxNum));
     }
 
     void operator()(const char* value, std::size_t value_size) {
-        // Log() << "Serialize()(char) " << value_size;
         store.append(reinterpret_cast<const char*>(value), value_size);
     }
 };
@@ -82,7 +78,6 @@ struct ReusableHATDeserializer {
     T operator()() {
         T value;
         std::memcpy(reinterpret_cast<char*>(&value), store.begin()+offset, sizeof(T));
-        // Log() << "Deserializer(T) " << sizeof(T) << " " << value;
         offset += sizeof(T);
         return value;
     }
@@ -90,11 +85,9 @@ struct ReusableHATDeserializer {
     template <typename T,
     typename std::enable_if<! std::is_arithmetic<T>::value>::type* = nullptr> // invert the above specialzation for vector (TODO make this more clean)
     T operator()() { // specialization on our value type for deserialization
-        // Log() << "DeserializerVec ";
         HATSerializationVectorSizeType size = 0;
         std::memcpy(reinterpret_cast<char*>(&size), store.begin()+offset, sizeof(size));
         offset += sizeof(size);
-        // Log() << "DeserializerVec size " << size;
 
         PrefixMap::mapped_type value(size, 0); // resize our vector so we can copy into it without causing explosion 
         std::memcpy(reinterpret_cast<char*>(value.data()), store.begin()+offset, size * sizeof(TxNum));
@@ -104,7 +97,6 @@ struct ReusableHATDeserializer {
     }
 
     void operator()(char* value_out, std::size_t value_size) {
-        // Log() << "Deserializer()(char) " << value_size;
         std::memcpy(value_out, store.begin()+offset, value_size);
         offset += value_size;
     }
@@ -117,6 +109,7 @@ struct ReusableHATDeserializer {
 struct ReusableBlock {
     constexpr static size_t NIBBLE_WIDTH = 4; // half octet
     constexpr static size_t MAX_BITS = 16; // must be a multiple of NIBBLE_WIDTH
+    constexpr static size_t MAX_PREFIX_SIZE = MAX_BITS / NIBBLE_WIDTH;
 
     PrefixMap pmap; // Prefix map for efficient searching
 
@@ -124,6 +117,8 @@ struct ReusableBlock {
 
     bool operator==(const ReusableBlock &o) const noexcept { return pmap == o.pmap; }
     bool operator!=(const ReusableBlock &o) const noexcept { return !operator==(o); }
+
+    void clear() { pmap.clear(); }
 
     // perform serialization of a bitcoin input, the prefix of this will be indexed
     static RuHash serializeInput(const bitcoin::CTxIn& input) {
@@ -149,7 +144,6 @@ struct ReusableBlock {
 
     void add(const RuHash& ruHash, const TxNum n) {
         assert(n != 0); // coinbase - this would be strange..
-        // Log() << Util::ToHexFast(ruHash) << ":" << n;
         // we could calculate masks from nibble width but it makes code harder to read
         // split the input hash by every 4 bits
         // we can use prefix search on htrie to handle wider scans
@@ -166,9 +160,7 @@ struct ReusableBlock {
     // serialization
     QByteArray toBytes() const noexcept {
         ReusableHATSerializer serializer;
-        // Log() << "serialize ReusableBlock";
         pmap.serialize(serializer);
-        // Log() << "serialized " << serializer.store.size();
         return serializer.store;
     }
 
@@ -176,10 +168,7 @@ struct ReusableBlock {
     static ReusableBlock fromBytes(const QByteArray &ba) noexcept {
         ReusableHATDeserializer deserializer(ba);
         ReusableBlock ret;
-        // Log() << "Deserialize ReusableBlock " << ba.size();
-        // Log() << Util::ToHexFast(ba);
         ret.pmap = PrefixMap::deserialize(deserializer);
-        // Log() << "Deserialized " << ret.pmap.size();
         return ret;
     }
 };

@@ -230,6 +230,23 @@ public:
     /// return a truncated vector if the overflow is as a result of confirmed+unconfirmed exceeding MaxHistory.
     UnspentItems listUnspent(const HashX &) const;
 
+
+    //-- reusable history
+    struct ReusableHistoryItem {
+        TxHash hash;
+        int height = 0; ///< block height. 0 = unconfirmed, -1 = unconfirmed with unconfirmed parent. Note this is ambiguous with block 0 :(
+
+        // for sort & maps
+        bool operator<(const ReusableHistoryItem &o) const noexcept;
+        bool operator==(const ReusableHistoryItem &o) const noexcept;
+    };
+    using ReusableHistory = std::vector<ReusableHistoryItem>;
+
+    /// TODO document better
+    /// Thread-safe. Will return an empty vector if the confirmed history size exceeds MaxHistory, or a truncated
+    /// vector if the confirmed + unconfirmed history exceeds MaxHistory.
+    ReusableHistory getReusableHistory(const BlockHeight height, const size_t count, const std::string & prefix, bool includeConfirmed, bool includeMempool) const;
+
     /// thread safe -- returns confirmd, unconfirmed balance for a scripthash
     std::pair<bitcoin::Amount, bitcoin::Amount> getBalance(const HashX &) const;
 

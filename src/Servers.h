@@ -370,9 +370,10 @@ private:
     void rpc_blockchain_transaction_get_merkle(Client *, const RPC::Message &); // fully implemented
     void rpc_blockchain_transaction_id_from_pos(Client *, const RPC::Message &); // fully implemented
     // reusable addresses
-    void rpc_blockchain_reusable_get_history(Client *, const RPC::Message &); // fully implemented
-    void rpc_blockchain_reusable_subscribe(Client *, const RPC::Message &); // fully implemented
-    void rpc_blockchain_reusable_unsubscribe(Client *, const RPC::Message &); // fully implemented
+    void rpc_blockchain_reusable_get_history(Client *, const RPC::Message &); // fully implemented // TODO LIE
+    void rpc_blockchain_reusable_get_mempool(Client *, const RPC::Message &); // fully implemented // TODO LIE
+    void rpc_blockchain_reusable_subscribe(Client *, const RPC::Message &); // fully implemented // TODO LIE
+    void rpc_blockchain_reusable_unsubscribe(Client *, const RPC::Message &); // fully implemented // TODO LIE
     // utxo
     void rpc_blockchain_utxo_get_info(Client *, const RPC::Message &); // fully implemented
     // mempool
@@ -424,6 +425,10 @@ private:
     /// called from get_mempool and get_history to retrieve the mempool and/or history for a hashx synchronously.
     /// Returns the QVariantMap suitable for placing into the resulting response.
     QVariantList getHistoryCommon(const HashX & sh, bool mempoolOnly);
+
+    /// called from reusable.get_mempool and reusable.get_history 
+    /// TODO document more (especially how height and count can/should be 0 for mempool only search)
+    QVariantList getReusableHistoryCommon(const BlockHeight height, const size_t count, const QByteArray& desiredPrefix, bool mempoolOnly);
 
     double lastSubsWarningPrintTime = 0.; ///< used internally to rate-limit "max subs exceeded" message spam to log
 
