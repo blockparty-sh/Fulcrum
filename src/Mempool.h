@@ -88,6 +88,8 @@ struct Mempool
     using TxRef = std::shared_ptr<Tx>;
     /// master mapping of TxHash -> TxRef
     using TxMap = robin_hood::unordered_flat_map<TxHash, TxRef, HashHasher>;
+    /// list of transactions received in order -> TxRef for use in reusable blocks
+    using RuTxList = std::vector<TxRef>;
     /// ensures an ordering of TxRefs for the set below that are from fewest ancestors -> most ancestors
     struct TxRefOrdering {
         bool operator()(const TxRef &a, const TxRef &b) const {
@@ -110,9 +112,8 @@ struct Mempool
     // -- Data members of struct Mempool --
     TxMap txs;
     HashXTxMap hashXTxs;
-    // TODO add this static TxNum ruLastInsertedIdx = 0; // store this as key of ruTxInsertOrder
-    robin_hood::unordered_flat_map<TxNum, TxHash> ruTxInsertOrder; // store the mempool items received in order so our ruBlk has 
-    ReusableBlock ruBlk;
+    RuTxList txsOrdered; // This begins at 0 and counts up for each tx to allow for reusable indexing by txnum without being in a block
+    ReusableBlock ruBlk; // Allow for 
 
     inline void clear() {
         // Enforce a little hysteresis about what sizes we may need in the future; reserve 75% of the last size we saw.
@@ -121,15 +122,14 @@ struct Mempool
         // leave space in case we are in a situation where many tx's are coming in quickly.
         // Note that the default implementation of robin_hood clear() never shrinks its hashtables, and requires
         // explicit calles to reserve() even after a clear().
-        const auto txsSize = txs.size(), hxSize = hashXTxs.size();
+        const auto txsSize = txs.size(), hxSize = hashXTxs.size(), txsoSize = txsOrdered.size();
         txs.clear();
         hashXTxs.clear();
-        // TODO enable this ruLastInsertedIdx = 0; // we are resetting everything that uses this so we can safely reset to 0
-        ruTxInsertOrder.clear();
+        txsOrdered.clear();
         ruBlk.clear();
         txs.reserve(size_t(txsSize*0.75));
         hashXTxs.reserve(size_t(hxSize*0.75));
-        ruTxInsertOrder.reserve(size_t(hxSize*0.75));
+        txsOrdered.reserve(size_t(txsoSize*0.75));
     }
 
     // -- Fee histogram support (used by mempool.get_fee_histogram RPC) --

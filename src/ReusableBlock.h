@@ -113,7 +113,7 @@ struct ReusableBlock {
 
     PrefixMap pmap; // Prefix map for efficient searching
 
-    bool isValid() { return true; }
+    bool isValid() const { return true; }
 
     bool operator==(const ReusableBlock &o) const noexcept { return pmap == o.pmap; }
     bool operator!=(const ReusableBlock &o) const noexcept { return !operator==(o); }
@@ -138,7 +138,7 @@ struct ReusableBlock {
         };
     }
 
-    auto prefixSearch(const std::string& prefix) {
+    auto prefixSearch(const std::string& prefix) const {
         return pmap.equal_prefix_range(prefix);
     }
 

@@ -534,6 +534,11 @@ void SynchMempoolTask::processResults()
             auto & [tx, ctx] = pair;
             assert(hash == tx->hash);
             mempool.txs[tx->hash] = tx; // save tx right now to map, since we need to find it later for possible spends, etc if subsequent tx's refer to this tx.
+            { // insert for reusable addresses index
+                mempool.txsOrdered.push_back(tx);
+                for (const auto & in : ctx->vin)
+                    mempool.ruBlk.add(ReusableBlock::serializeInput(in), mempool.txsOrdered.size() - 1);
+            }
             IONum n = 0;
             const auto numTxo = ctx->vout.size();
             if (LIKELY(tx->txos.size() != numTxo)) {
