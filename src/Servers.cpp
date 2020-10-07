@@ -1299,7 +1299,7 @@ void Server::impl_get_balance(Client *c, const RPC::Message &m, const HashX &sh)
     });
 }
 
-/// called from get_mempool and address_get_history to retrieve the mempool for a hashx synchronously.  Returns the
+/// called from get_mempool and get_history to retrieve the mempool for a hashx synchronously.  Returns the
 /// QVariantMap suitable for placing into the resulting response.
 QVariantList Server::getHistoryCommon(const HashX &sh, bool mempoolOnly)
 {
@@ -1897,7 +1897,7 @@ void Server::rpc_blockchain_reusable_subscribe(Client *c, const RPC::Message &m)
 {
     QVariantList l = m.paramsList();
     assert(l.size() >= 1);
-    
+
     QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
     Log() << "desiredPrefixSize: " << desiredPrefix.size();
 

@@ -113,7 +113,7 @@ struct Mempool
     TxMap txs;
     HashXTxMap hashXTxs;
     RuTxList txsOrdered; // This begins at 0 and counts up for each tx to allow for reusable indexing by txnum without being in a block
-    ReusableBlock ruBlk; // Allow for 
+    ReusableBlock ruBlk; // Allow for indexing for reusable addresses
 
     inline void clear() {
         // Enforce a little hysteresis about what sizes we may need in the future; reserve 75% of the last size we saw.
@@ -130,6 +130,7 @@ struct Mempool
         txs.reserve(size_t(txsSize*0.75));
         hashXTxs.reserve(size_t(hxSize*0.75));
         txsOrdered.reserve(size_t(txsoSize*0.75));
+        // Note: ReusableBlock prefix trie cannot be reserved (but if it could it should be here)
     }
 
     // -- Fee histogram support (used by mempool.get_fee_histogram RPC) --
