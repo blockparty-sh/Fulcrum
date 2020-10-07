@@ -20,9 +20,8 @@ namespace {
 
         Log() << "Testing ReusableBlock add...";
         ReusableBlock ru;
-        for (size_t i=1; i<2; ++i) {
-            // size_t times = rgen.bounded(4);
-            size_t times = 1;
+        for (size_t i=1; i<100; ++i) {
+            size_t times = rgen.bounded(4);
             for (size_t j=0; j<times; ++j)
                 ru.add(genRandomRuHash(), i);
         }

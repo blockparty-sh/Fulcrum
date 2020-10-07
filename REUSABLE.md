@@ -36,6 +36,14 @@ similarly to blockchain.transaction.get_id_from_pos
 
 ---
 
+What is prefix format and why do we do prefix using weird hexstring format?
+
+This is simplest format. Everything can use standard hex encoding/decoding.
+(Maybe we wanna do just single digit though?)
+
+The 4 bit size is enforced 
+
+
 
 **get_history**
 

@@ -104,7 +104,7 @@ struct ReusableHATDeserializer {
     }
 
     void operator()(char* value_out, std::size_t value_size) {
-        Log() << "Deserializer()(char) " << value_size;
+        // Log() << "Deserializer()(char) " << value_size;
         std::memcpy(value_out, store.begin()+offset, value_size);
         offset += value_size;
     }

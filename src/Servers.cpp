@@ -1862,12 +1862,17 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
 
     Log() << "rpc_blockchain_reusable_get_history " << height << " " << count << " " << " " << Util::ToHexFast(desiredPrefix); 
 
+    std::vector<TxHash> txHashes;
     generic_do_async(c, m.id, [height, count, desiredPrefix, unspentOnly, compact, this] () mutable {
-        QVariantList resp;
         for (BlockHeight h = height; h < height + count; ++h) {
-            std::vector<TxHash> txHashes = storage->txHashesForReusableInBitcoindMemoryOrder(h, desiredPrefix);
-            // TODO unspentOnly, compact handling 
-            Log() << "total hashes " << txHashes.size();
+            std::vector<TxHash> blockTxHashes = storage->txHashesForReusableInBitcoindMemoryOrder(h, desiredPrefix);
+            txHashes.insert(txHashes.end(), blockTxHashes.begin(), blockTxHashes.end());
+        }
+
+        Log() << "total hashes " << txHashes.size();
+
+        if (compact) {
+            QVariantList resp;
             for (auto & txHash : txHashes) {
                 Log() << Util::ToHexFast(txHash) << " " << h;
                 resp.push_back(QVariantMap{
@@ -1875,9 +1880,22 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
                     { "height", h },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
                 });
             }
+            return resp;
         }
 
-        return resp;
+        if (unspentOnly) {
+            throw RPCError("unspentOnly not implemented yet");
+        }
+
+        // TODO this should be full txs
+        for (auto & txHash : txHashes) {
+            Log() << Util::ToHexFast(txHash) << " " << h;
+            resp.push_back(QVariantMap{
+                { "tx_hash" , Util::ToHexFast(txHash) },
+                { "height", h },  // confirmed height. Is 0 for mempool tx regardless of unconf. parent status. Note this differs from get_mempool or get_history where -1 is used for unconf. parent.
+            });
+        }
+
     });
 }
 
