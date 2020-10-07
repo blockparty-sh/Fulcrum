@@ -635,14 +635,12 @@ void Storage::startup()
             // ok, did not exist .. write a new one to db
             saveMeta_impl();
         }
-        /* // TODO remove comment
         if (isDirty()) {
             throw DatabaseError("It appears that " APPNAME " was forcefully killed in the middle of committng a block to the db. "
                                 "We cannot figure out where exactly in the update process " APPNAME " was killed, so we "
                                 "cannot undo the inconsistent state caused by the unexpected shutdown. Sorry!"
                                 "\n\nThe database has been corrupted. Please delete the datadir and resynch to bitcoind.\n");
         }
-        */
     }
 
     // load headers -- may throw.. this must come first
@@ -1870,8 +1868,59 @@ std::vector<TxHash> Storage::txHashesForBlockInBitcoindMemoryOrder(BlockHeight h
     return ret;
 }
 
+auto Storage::getHistory(const HashX & hashX, bool conf, bool unconf) const -> History
+{
+    History ret;
+    const size_t maxHistory = size_t(options->maxHistory);
+    if (hashX.length() != HashLen)
+        return ret;
+    try {
+        SharedLockGuard g(p->blocksLock);  // makes sure history doesn't mutate from underneath our feet
+        if (conf) {
+            static const QString err("Error retrieving history for a script hash");
+            auto nums_opt = GenericDBGet<TxNumVec>(p->db.shist.get(), hashX, true, err, false, p->db.defReadOpts);
+            if (nums_opt.has_value()) {
+                auto & nums = *nums_opt;
+                if (UNLIKELY(nums.size() > maxHistory)) {
+                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
+                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(nums.size()));
+                }
+                ret.reserve(nums.size());
+                // TODO: The below could use some optimization.  A batched version of both hashForTxNum and
+                // heightForTxNum are low-hanging fruit for optimization.  Each call to the below takes a shared lock
+                // then releases it, for each item.  I imagine batched versions would have significantly less overhead
+                // per item, which could add up to huge performance savings on large histories.  This is a very
+                // low hanging fruit for optimization -- thus I am leaving this comment here so I can remember to come
+                // back and optmize the below.  /TODO
+                for (auto num : nums) {
+                    auto hash = hashForTxNum(num).value(); // may throw, but that indicates some database inconsistency. we catch below
+                    auto height = heightForTxNum(num).value(); // may throw, same deal
+                    ret.emplace_back(HistoryItem{hash, int(height), {}});
+                }
+            }
+        }
+        if (unconf) {
+            auto [mempool, lock] = this->mempool();
+            if (auto it = mempool.hashXTxs.find(hashX); it != mempool.hashXTxs.end()) {
+                const auto & txvec = it->second;
+                const size_t total = ret.size() + txvec.size();
+                if (UNLIKELY(total > maxHistory)) {
+                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
+                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(total));
+                }
+                ret.reserve(total);
+                for (const auto & tx : txvec)
+                    ret.emplace_back(HistoryItem{tx->hash, tx->hasUnconfirmedParentTx ? -1 : 0, tx->fee});
+            }
+        }
+    } catch (const std::exception &e) {
+        Warning(Log::Magenta) << __func__ << ": " << e.what();
+    }
+    return ret;
+}
+
 auto Storage::getReusableHistory(const BlockHeight start_height, const size_t count, const std::string & prefix, bool conf, bool unconf) const -> ReusableHistory
-{ // TODO
+{
     ReusableHistory ret;
     const size_t maxReusableHistory = size_t(options->maxReusableHistory);
     if (prefix.size() > ReusableBlock::MAX_PREFIX_SIZE)
@@ -1930,57 +1979,6 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
                     throw InternalError("num not found in mempool txsOrdered");
                 auto hash = mempool.txsOrdered[num]->hash;
                 ret.emplace_back(ReusableHistoryItem{hash, int(0)});
-            }
-        }
-    } catch (const std::exception &e) {
-        Warning(Log::Magenta) << __func__ << ": " << e.what();
-    }
-    return ret;
-}
-
-auto Storage::getHistory(const HashX & hashX, bool conf, bool unconf) const -> History
-{
-    History ret;
-    const size_t maxHistory = size_t(options->maxHistory);
-    if (hashX.length() != HashLen)
-        return ret;
-    try {
-        SharedLockGuard g(p->blocksLock);  // makes sure history doesn't mutate from underneath our feet
-        if (conf) {
-            static const QString err("Error retrieving history for a script hash");
-            auto nums_opt = GenericDBGet<TxNumVec>(p->db.shist.get(), hashX, true, err, false, p->db.defReadOpts);
-            if (nums_opt.has_value()) {
-                auto & nums = *nums_opt;
-                if (UNLIKELY(nums.size() > maxHistory)) {
-                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
-                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(nums.size()));
-                }
-                ret.reserve(nums.size());
-                // TODO: The below could use some optimization.  A batched version of both hashForTxNum and
-                // heightForTxNum are low-hanging fruit for optimization.  Each call to the below takes a shared lock
-                // then releases it, for each item.  I imagine batched versions would have significantly less overhead
-                // per item, which could add up to huge performance savings on large histories.  This is a very
-                // low hanging fruit for optimization -- thus I am leaving this comment here so I can remember to come
-                // back and optmize the below.  /TODO
-                for (auto num : nums) {
-                    auto hash = hashForTxNum(num).value(); // may throw, but that indicates some database inconsistency. we catch below
-                    auto height = heightForTxNum(num).value(); // may throw, same deal
-                    ret.emplace_back(HistoryItem{hash, int(height), {}});
-                }
-            }
-        }
-        if (unconf) {
-            auto [mempool, lock] = this->mempool();
-            if (auto it = mempool.hashXTxs.find(hashX); it != mempool.hashXTxs.end()) {
-                const auto & txvec = it->second;
-                const size_t total = ret.size() + txvec.size();
-                if (UNLIKELY(total > maxHistory)) {
-                    throw HistoryTooLarge(QString("History for scripthash %1 exceeds MaxHistory %2 with %3 items!")
-                                          .arg(QString(hashX.toHex())).arg(maxHistory).arg(total));
-                }
-                ret.reserve(total);
-                for (const auto & tx : txvec)
-                    ret.emplace_back(HistoryItem{tx->hash, tx->hasUnconfirmedParentTx ? -1 : 0, tx->fee});
             }
         }
     } catch (const std::exception &e) {

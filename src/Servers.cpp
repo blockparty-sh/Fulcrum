@@ -48,6 +48,7 @@
 #include <iostream>
 #include <limits>
 #include <list>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -345,23 +346,24 @@ namespace {
         return ret;
     }
 
-    /// used internally by RPC methods. Given a prefixHex, ensure it's hex data and nothing else.
-    /// Returns bytes of valid hex decoded data or an empty QByteArray on failure.
-    // TODO should this be single char hex
-    QByteArray validatePrefixHex(const QString & prefixHex) {
-        bool ok = false;
-        prefixHex.toInt(&ok, 16);
-        if (! ok) {
-            return QByteArray();
+    /// used internally by reusable RPC methods. Given a prefixHex, ensure it's hex data and nothing else.
+    //  NOTE: hex data is single character for this, not like normal hex i.e. 'b00b5' is a valid prefix (5 characters)
+    /// Returns optional bytes (string) of valid hex decoded data
+    std::optional<std::string> decodeReusablePrefixHex(const QString & prefixHex) {
+        const QByteArray prefixPreProcessed = prefixHex.toUtf8();
+        std::string a(prefixPreProcessed.size(), '\0');
+        for (size_t i=0; i<prefixPreProcessed.size(); ++i) {
+            const char c = prefixPreProcessed.at(i);
+
+			if (c >= '0' && c <= '9')
+				a[i] = c - '0';
+			else if (c >= 'A' && c <= 'F')
+				a[i] = c - 'A' + 10;
+			else if (c >= 'a' && c <= 'f')
+				a[i] = c - 'a' + 10;
+			else
+				return std::nullopt;
         }
-        QByteArray a = QByteArray::fromHex(prefixHex.toUtf8());
-        /* // TODO perform these checks
-        for (auto c : a)
-            if (c >= 0x10)
-                throw RPCError("Invalid desiredPrefix argument; contains value >= 16");
-        if (desiredPrefix.size() > 4)
-            throw RPCError("Invalid desiredPrefix argument; expected length < 5");
-        */
         return a;
     }
 }
@@ -1828,10 +1830,9 @@ void Server::rpc_blockchain_utxo_get_info(Client *c, const RPC::Message &m)
     });
 }
 
-QVariantList Server::getReusableHistoryCommon(const BlockHeight height, const size_t count, const QByteArray& desiredPrefix, bool mempoolOnly)
+QVariantList Server::getReusableHistoryCommon(const BlockHeight height, const size_t count, const std::string& prefix, bool mempoolOnly)
 {
     QVariantList resp;
-    const std::string prefix(desiredPrefix.constData(), desiredPrefix.length());
     const auto items = storage->getReusableHistory(height, count, prefix, !mempoolOnly, true);
     for (const auto & item : items) {
         QVariantMap m{
@@ -1854,7 +1855,11 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     unsigned count = l[1].toUInt(&ok); // arg1
     if (!ok || count >= Storage::MAX_HEADERS)
         throw RPCError("Invalid count argument; expected non-negative numeric value");
-    QByteArray desiredPrefix = validatePrefixHex( l[2].toString() ); // arg2
+    const std::optional<std::string> prefix = decodeReusablePrefixHex( l[2].toString() ); // arg2
+	if (!prefix.has_value())
+		throw RPCError("Invalid prefix argument; expected hex string");
+	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+        throw RPCError("Invalid prefix argument; too long");
     bool unspentOnly = false;
     if (l.size() == 4) { //optional arg3
         const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
@@ -1868,8 +1873,8 @@ void Server::rpc_blockchain_reusable_get_history(Client *c, const RPC::Message &
     static constexpr unsigned MAX_COUNT = 2016; ///< TODO: make this cofigurable. this is the current electrumx limit, for now.
     count = std::min(std::min(unsigned(tip+1) - height, count), MAX_COUNT);
 
-    generic_do_async(c, m.id, [height, count, desiredPrefix, this] {
-        return getReusableHistoryCommon(height, count, desiredPrefix, false);
+    generic_do_async(c, m.id, [height, count, prefix, this] {
+        return getReusableHistoryCommon(height, count, *prefix, false);
     });
 }
 
@@ -1877,9 +1882,11 @@ void Server::rpc_blockchain_reusable_get_mempool(Client *c, const RPC::Message &
 {
     QVariantList l = m.paramsList();
     assert(l.size() >= 1);
-    bool ok;
-    QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
-    Log() << "desiredPrefixSize: " << desiredPrefix.size();
+    const std::optional<std::string> prefix = decodeReusablePrefixHex( l[0].toString() ); // arg0
+	if (!prefix.has_value())
+		throw RPCError("Invalid prefix argument; expected hex string");
+	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+        throw RPCError("Invalid prefix argument; too long");
     bool unspentOnly = false;
     if (l.size() == 2) { //optional arg3
         const auto [arg, argOk] = parseBoolSemiLooselyButNotTooLoosely( l.back() );
@@ -1888,8 +1895,8 @@ void Server::rpc_blockchain_reusable_get_mempool(Client *c, const RPC::Message &
         unspentOnly = arg;
     }
 
-    generic_do_async(c, m.id, [desiredPrefix, this] {
-        return getReusableHistoryCommon(0, 0, desiredPrefix, true);
+    generic_do_async(c, m.id, [prefix, this] {
+        return getReusableHistoryCommon(0, 0, *prefix, true);
     });
 }
 
@@ -1897,9 +1904,11 @@ void Server::rpc_blockchain_reusable_subscribe(Client *c, const RPC::Message &m)
 {
     QVariantList l = m.paramsList();
     assert(l.size() >= 1);
-
-    QByteArray desiredPrefix = validatePrefixHex( l[0].toString() ); // arg0
-    Log() << "desiredPrefixSize: " << desiredPrefix.size();
+    const std::optional<std::string> prefix = decodeReusablePrefixHex( l[0].toString() ); // arg0
+	if (!prefix.has_value())
+		throw RPCError("Invalid prefix argument; expected hex string");
+	if ((*prefix).size() > ReusableBlock::MAX_PREFIX_SIZE)
+        throw RPCError("Invalid prefix argument; too long");
 
     // TODO should we refactor the subscribe / subsmgr code to accept ru subscriptions
 }

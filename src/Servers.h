@@ -428,7 +428,7 @@ private:
 
     /// called from reusable.get_mempool and reusable.get_history 
     /// TODO document more (especially how height and count can/should be 0 for mempool only search)
-    QVariantList getReusableHistoryCommon(const BlockHeight height, const size_t count, const QByteArray& desiredPrefix, bool mempoolOnly);
+    QVariantList getReusableHistoryCommon(const BlockHeight height, const size_t count, const std::string& prefix, bool mempoolOnly);
 
     double lastSubsWarningPrintTime = 0.; ///< used internally to rate-limit "max subs exceeded" message spam to log
 
