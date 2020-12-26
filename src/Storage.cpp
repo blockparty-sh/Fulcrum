@@ -1762,7 +1762,7 @@ void Storage::addBlock(PreProcessedBlockPtr ppb, bool saveUndo, unsigned nReserv
                 for (auto & in : ppb->inputs) {
                     const TXO txo{in.prevoutHash, in.prevoutN};
                     // add to reusable set skip coinbase as it has no input
-                    if (inum && inum < REUSABLE_INPUT_IDX_LIMIT) { // see note above about this limit
+                    if (inum && in.prevoutN < REUSABLE_INPUT_IDX_LIMIT) { // see note above about this limit
                         // TODO should we send whole prevoutHash here or just prefix??
                         ruBlk.add(in.ruHash, in.txIdx);
                     }
@@ -1808,6 +1808,8 @@ void Storage::addBlock(PreProcessedBlockPtr ppb, bool saveUndo, unsigned nReserv
                     }
                     ++inum;
                 }
+
+                Log() << "Saving rublk " << ppb->height << " size " << ruBlk.size() << " " << ruBlk.toBytes().size();
 
                 // save rublk2trie update to db
                 // TODO this should also update a counter so we can track some corruption occurring when scanning in loadCheckReusableBlocksInDb

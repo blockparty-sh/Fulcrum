@@ -1879,7 +1879,7 @@ void Server::rpc_blockchain_utxo_get_info(Client *c, const RPC::Message &m)
 QVariantList Server::getReusableHistoryCommon(const BlockHeight height, const size_t count, const std::string& prefix, bool mempoolOnly)
 {
     QVariantList resp;
-    const auto items = storage->getReusableHistory(height, count, prefix, !mempoolOnly, true);
+    const auto items = storage->getReusableHistory(height, count, prefix, !mempoolOnly, mempoolOnly);
     for (const auto & item : items) {
         QVariantMap m{
             { "tx_hash" , Util::ToHexFast(item.hash) }, // TODO this should be full tx
