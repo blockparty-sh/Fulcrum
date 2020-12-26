@@ -752,13 +752,6 @@ void SynchMempoolTask::processResults()
         // of time we hold this lock -- so we hold it while accessing an in-memory data structure
         // rather than the DB on disk (which would be slow).
         auto [mempool, lock] = storage->mutableMempool(); // grab mempool struct exclusively
-        for (const auto & [txid, pair] : txsDownloaded) {
-            const auto & [tx, ctx] = pair;
-            mempool.txsOrdered.push_back(tx);
-            for (const auto & in : ctx->vin) {
-                mempool.ruBlk.add(ReusableBlock::serializeInput(in), mempool.txsOrdered.size() - 1);
-            }
-        }
         // check that the mempool didn't change
         if (UNLIKELY(std::tie(sizes.nTxs, sizes.nHashXs) != std::tuple(mempool.txs.size(), mempool.hashXTxs.size()))) {
             // This size heuristic is enough because other subsystems can only drop or clear, never add.
@@ -766,6 +759,9 @@ void SynchMempoolTask::processResults()
             throw InternalError("Warning: Mempool changed in between the time we released the shared lock and "
                                 "re-acquired the lock exclusively.  We will try again later...");
         }
+
+        Log() << "reusable: for txid " << " ruNum2PrefixSet.size() " << mempool.ruNum2PrefixSet.size()
+              << " ruNum2Hash.size() " << mempool.ruNum2Hash.size() << " ru.size() " << mempool.ruBlk.size();
         return mempool.addNewTxs(scriptHashesAffected, txsDownloaded, getFromCache, TRACE); // may throw
     }();
     if ((oldSize != newSize || elapsedMsec > 1e3) && Debug::isEnabled()) {

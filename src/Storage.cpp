@@ -2363,9 +2363,10 @@ auto Storage::getReusableHistory(const BlockHeight start_height, const size_t co
             fastRemoveDuplicates(nums);
 
             for (auto & num : nums) {
-                if (num >= mempool.txsOrdered.size())
-                    throw InternalError("TxNum not found in mempool txsOrdered");
-                auto hash = mempool.txsOrdered[num]->hash;
+                auto it = mempool.ruNum2Hash.find(num);
+                if (it == mempool.ruNum2Hash.end())
+                    throw InternalError("TxNum not found in mempool ruNum2Hash");
+                auto [txNum, hash] = *it;
                 ret.emplace_back(ReusableHistoryItem{hash, int(0)});
             }
         }

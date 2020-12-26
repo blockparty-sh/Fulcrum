@@ -104,8 +104,10 @@ struct Mempool
     using TxRef = std::shared_ptr<Tx>;
     /// master mapping of TxHash -> TxRef
     using TxMap = std::unordered_map<TxHash, TxRef, HashHasher>;
-    /// list of transactions received in order -> TxRef for use in reusable blocks
-    using RuTxList = std::vector<TxRef>;
+    /// TODO describe
+    using RuNumMap = std::unordered_map<TxNum, TxHash, HashHasher>;
+    // TODO describe
+    using RuNum2PrefixSetMap = std::unordered_map<TxNum, std::unordered_set<RuHash, HashHasher>, HashHasher>;
     /// ensures an ordering of TxRefs for the set below that are from fewest ancestors -> most ancestors
     struct TxRefOrdering {
         bool operator()(const TxRef &a, const TxRef &b) const {
@@ -128,7 +130,8 @@ struct Mempool
     // -- Data members of struct Mempool --
     TxMap txs;
     HashXTxMap hashXTxs;
-    RuTxList txsOrdered; // This begins at 0 and counts up for each tx to allow for reusable indexing by txnum without being in a block
+    RuNumMap ruNum2Hash;
+    RuNum2PrefixSetMap ruNum2PrefixSet;
     ReusableBlock ruBlk; // Allow for indexing for reusable addresses
 
 
@@ -222,6 +225,7 @@ private:
     /// Internal use; called by dropTxs and confirmedInBlock to do some book-keeping; returns number of txs removed.
     std::size_t rmTxsInHashXTxs(const TxHashSet &txids, const ScriptHashesAffectedSet &scriptHashesAffected, bool TRACE,
                                 const std::optional<ScriptHashesAffectedSet> &hashXsNeedingSort = {});
+    std::size_t rmRuTxs(const TxHashSet &txids, bool TRACE); // TODO
 
 #ifdef ENABLE_TESTS
 public:

@@ -157,6 +157,20 @@ struct ReusableBlock {
         }
     }
 
+    void remove(const RuHash& ruHash) {
+        // assert(n != 0); // coinbase - this would be strange.. but for mempool it makes sense.. hm! TODO
+        // we could calculate masks from nibble width but it makes code harder to read
+        // split the input hash by every 4 bits
+        // we can use prefix search on htrie to handle wider scans
+        std::string prefix = ReusableBlock::ruHashToPrefix(ruHash);
+
+        pmap.erase(prefix);
+    }
+
+    auto size() -> decltype(pmap.size()) {
+        return pmap.size();
+    }
+
     // serialization
     QByteArray toBytes() const noexcept {
         ReusableHATSerializer serializer;

@@ -27,7 +27,6 @@
 void Mempool::clear() {
     txs.clear();
     hashXTxs.clear();
-    txsOrdered.clear();
     ruBlk.clear();
     txs.rehash(0); // this should free previous capacity
     hashXTxs.rehash(0);
@@ -122,12 +121,20 @@ auto Mempool::addNewTxs(ScriptHashesAffectedSet & scriptHashesAffected,
         auto & [tx, ctx] = pair;
         assert(hash == tx->hash);
         IONum inNum = 0;
+        TxNum ruTxNum = HashHasher{}(tx->hash); // TODO document
+        ruNum2Hash[ruTxNum] = tx->hash;
+        ruNum2PrefixSet[ruTxNum] = {};
         for (const auto & in : ctx->vin) {
             const IONum prevN = IONum(in.prevout.GetN());
             const TxHash prevTxId = BTC::Hash2ByteArrayRev(in.prevout.GetTxId());
             const TXO prevTXO{prevTxId, prevN};
             TXOInfo prevInfo;
             QByteArray sh; // shallow copy of prevInfo.hashX
+            {
+                const auto ser = ReusableBlock::serializeInput(in);
+                this->ruBlk.add(ser, ruTxNum);
+                this->ruNum2PrefixSet[ruTxNum].insert(ser);
+            }
             if (auto it = this->txs.find(prevTxId); it != this->txs.end()) {
                 // prev is a mempool tx
                 tx->hasUnconfirmedParentTx = true; ///< mark the current tx we are processing as having an unconfirmed parent (this is used for sorting later and by the get_mempool & listUnspent code)
@@ -331,6 +338,8 @@ auto Mempool::dropTxs(ScriptHashesAffectedSet & scriptHashesAffectedOut, const T
             }
         }
 
+
+
         // and finally remove this tx from `txs` now, while we have its iterator .. this is faster
         // than doing the remove later, since we already have the iterator now!
         txs.erase(it);
@@ -360,12 +369,48 @@ auto Mempool::dropTxs(ScriptHashesAffectedSet & scriptHashesAffectedOut, const T
     return ret;
 }
 
+
+
+std::size_t Mempool::rmRuTxs(const TxHashSet &txids, const bool TRACE)
+{
+    std::size_t ct = 0;
+    for (const auto & txid : txids) {
+        TxNum ruTxNum = HashHasher{}(txid); // TODO document
+
+        {
+            auto it = this->ruNum2PrefixSet.find(ruTxNum);
+            if (it != this->ruNum2PrefixSet.end()) {
+                auto [txNum, prefixSet] = *it;
+                for (auto & ser : prefixSet) {
+                    this->ruBlk.remove(ser);
+                }
+
+                this->ruNum2PrefixSet.erase(it);
+            }
+        }
+
+        {
+            auto it = this->ruNum2Hash.find(ruTxNum);
+            if (it != this->ruNum2Hash.end()) {
+                this->ruNum2Hash.erase(it);
+            }
+        }
+
+        ++ct;
+    }
+
+    return ct;
+}
+
 std::size_t Mempool::rmTxsInHashXTxs(const TxHashSet &txids, const ScriptHashesAffectedSet &scriptHashesAffected, const bool TRACE,
                                      const std::optional<ScriptHashesAffectedSet> &hashXsNeedingSort)
 {
     Tic t0;
     std::size_t ct = 0, sortCt = 0;
     qint64 sortTimeNanos = 0;
+
+    // TODO document
+    rmRuTxs(txids, TRACE);
 
     // next, scan hashXs, removing entries for the txids in question
     for (const auto & hashX : scriptHashesAffected) {
