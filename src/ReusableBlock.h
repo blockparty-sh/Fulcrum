@@ -124,6 +124,7 @@ struct ReusableBlock {
     static RuHash serializeInput(const bitcoin::CTxIn& input) {
         bitcoin::CDataStream s(0, 0); // 0,0 is for the version types, which are not relevant for us here
         input.Serialize(s);
+        Log() << "serializeInput: " << Util::ToHexFast(QByteArray(s.data(), s.size())) << "\n";
         RuHash ruHash = BTC::Hash(QByteArray(s.data(), s.size()), false); // double sha2
         return ruHash;
     }

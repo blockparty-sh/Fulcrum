@@ -53,6 +53,31 @@ namespace {
         Log() << "Testing equality...";
         if (ru != ru2)
             throw Exception("ReusableBlock not equal");
+
+        std::vector<QString> txStrs = {
+            { "0100000001751ac11802cc3e4efc8aaaee87ca818482be9140dd6623f69db2c3af5c0b0ede01000000644161e02824b2ad3e24b1967ecd2e1bbcb53ca2b7c990802865b7f0f55e861849f7821daff5e78964346b1f7d16e5ce522d3354ca3cc1f6f4cba4ca0e57725af59e412102c986f0b3d6f4f8c765469fe0118cf973d676862f358e62a14104fae7d43f3032feffffff02e8030000000000001976a914ed707a5dbba9f4c117086c547fdc4e1e7a5ba40088accc550100000000001976a914e32151fdef9bc46cbb11514a84f54d8f51a905e588ac747a0a00" },
+        };
+        for (auto & txStr : txStrs) {
+            bitcoin::CMutableTransaction tx;
+            BTC::Deserialize(tx, Util::ParseHexFast(txStr.toUtf8()), 0, false);
+
+            for (size_t n = 0; n < tx.vin.size(); ++n) {
+                bitcoin::CTxIn input = tx.vin[n];
+                RuHash ruHash = ReusableBlock::serializeInput(input);
+                std::string ruHashPrefix = ReusableBlock::ruHashToPrefix(ruHash);
+                QByteArray prefixHex = Util::ToHexFast(QByteArray(ruHashPrefix.c_str(), ruHashPrefix.length()));
+                QByteArray prefixHexClean = prefixHex;
+                // remove leading 0 from hex to match the format we use otherwise
+                for (size_t j = 0; j < 4; ++j) {
+                    prefixHexClean.remove(j, 1);
+                }
+                Log()
+                    << "Txid: " << tx.GetId().ToString() << ":" << n
+                    << " RuHash: " << Util::ToHexFast(ruHash)
+                    << " Prefix: " << prefixHexClean;
+            }
+        }
+
     }
 
     static const auto test_  = App::registerTest("reusable", &test);
